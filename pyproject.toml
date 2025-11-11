@@ -1,0 +1,27 @@
+
+[tool.ruff]
+lint.select = ["ASYNC", "ARG", "B", "C", "C4", "E", "F", "Q", "W", "I"]
+
+lint.ignore = ["F401"]
+
+lint.unfixable = ["F401"]
+
+[project]
+name = "hai"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "phillychi3",email = "phillychi3@gmail.com"}
+]
+license = {text = "MIT License"}
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "httpx (>=0.28.1,<0.29.0)",
+    "ftfy (>=6.3.1,<7.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
