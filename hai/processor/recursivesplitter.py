@@ -1,7 +1,7 @@
 import re
 from typing import Any, Dict, List, Optional
 
-from core.node import BaseNode
+from hai.core.node import BaseNode
 
 
 class RecursiveSplitter(BaseNode):
