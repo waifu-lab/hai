@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional
 
-from hai.core.node import BaseNode
+from hai.core import BaseNode
 from hai.vectorstores.qdrant.QdrantClient import QdrantStore
 
 

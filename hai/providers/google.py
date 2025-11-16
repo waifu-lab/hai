@@ -20,6 +20,7 @@ class GoogleText(ProviderText):
             stream=False,
         )
 
+
 class GoogleEmbedding(ProviderEmbedding):
     def __init__(
         self,
@@ -33,6 +34,7 @@ class GoogleEmbedding(ProviderEmbedding):
             model=model,
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/embeddings",
         )
+
 
 # if __name__ == "__main__":
 #     google_provider = GoogleText(

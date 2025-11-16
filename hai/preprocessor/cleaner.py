@@ -1,7 +1,7 @@
 import re
 from typing import Any, Dict
 
-from core.node import BaseNode
+from hai.core import BaseNode
 from ftfy import fix_text
 
 DOUBLE_QUOTE = re.compile(f"[{re.escape(r'«‹»›„‟❝❞❮❯〝〞〟＂')}]")

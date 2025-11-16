@@ -1,7 +1,6 @@
-import re
 from typing import Any, Dict, List
 
-from hai.core.node import BaseNode
+from hai.core import BaseNode
 
 
 class Splitter(BaseNode):

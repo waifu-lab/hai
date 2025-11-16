@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 
 from httpx import AsyncClient
 
-from hai.core.node import BaseNode
+from hai.core import BaseNode
 
 # curl https://api.openai.com/v1/chat/completions \
 #   -H "Content-Type: application/json" \
