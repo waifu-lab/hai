@@ -1,6 +1,6 @@
 from typing import Any, Dict
 
-from hai.core.node.node import BaseNode
+from hai.core import BaseNode
 
 
 class EmbeddingProcessor(BaseNode):

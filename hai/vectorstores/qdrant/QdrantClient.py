@@ -176,16 +176,16 @@ class QdrantStore:
     ) -> List[Dict[str, Any]]:
         client = self._get_client()
 
-        search_result = client.search(
+        search_result = client.query_points(
             collection_name=self.collection_name,
-            query_vector=embedding,
+            query=embedding,
             limit=limit,
             score_threshold=score_threshold,
             query_filter=filter_conditions,
         )
 
         results = []
-        for scored_point in search_result:
+        for scored_point in search_result.points:
             result = {
                 "id": scored_point.id,
                 "score": scored_point.score,
@@ -215,7 +215,6 @@ class QdrantStore:
         return {
             "name": self.collection_name,
             "points_count": info.points_count,
-            "vectors_count": info.vectors_count,
             "status": info.status,
         }
 

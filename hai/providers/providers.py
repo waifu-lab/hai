@@ -75,6 +75,7 @@ class ProviderText(BaseNode):
         temperature: float,
         max_tokens: Optional[int] = None,
         stream: bool = False,
+        response_format: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(name)
         self.api_key = api_key
@@ -83,6 +84,7 @@ class ProviderText(BaseNode):
         self.max_tokens = max_tokens
         self.stream = stream
         self.base_url = base_url
+        self.response_format = response_format
 
     async def exec(self, context: Dict[str, Any]) -> Any:
         messages = context.get("messages", [])
@@ -99,6 +101,9 @@ class ProviderText(BaseNode):
 
         if self.max_tokens:
             payload["max_tokens"] = self.max_tokens
+
+        if self.response_format:
+            payload["response_format"] = self.response_format
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -126,6 +131,16 @@ class ProviderText(BaseNode):
 
         context["openai_response"] = data
         context["assistant_message"] = content
+
+        if self.response_format and self.response_format.get("type") == "json_object":
+            import json
+
+            try:
+                parsed_content = json.loads(content)
+                context["parsed_response"] = parsed_content
+                return parsed_content
+            except json.JSONDecodeError:
+                context["parse_error"] = "Failed to parse JSON response"
 
         return content
 
