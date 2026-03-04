@@ -16,7 +16,7 @@ class HTMLTextExtractor(HTMLParser):
         self.skip_tags = {"script", "style", "noscript", "iframe"}
         self.current_tag = None
 
-    def handle_starttag(self, tag):
+    def handle_starttag(self, tag, _attrs):
         self.current_tag = tag
         if tag in {"p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6", "li"}:
             self.text_parts.append("\n")

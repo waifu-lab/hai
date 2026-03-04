@@ -2,9 +2,11 @@ import asyncio
 from pathlib import Path
 from typing import List, Optional, Union
 
+import aiofiles
+
 from hai.core import Document
 
-from .base import BaseLoader
+from .base import BaseLoader, detect_encoding
 
 
 class TextLoader(BaseLoader):
@@ -46,31 +48,12 @@ class TextLoader(BaseLoader):
         self.encoding = encoding
         self.recursive = recursive
 
-    def _detect_encoding(self, file_path: Path) -> str:
-        """Detect file encoding by trying common encodings."""
-        if self.encoding:
-            return self.encoding
-
-        encodings = ["utf-8", "utf-8-sig", "latin-1", "cp1252", "gbk"]
-
-        for enc in encodings:
-            try:
-                with open(file_path, "r", encoding=enc) as f:
-                    f.read()
-                return enc
-            except (UnicodeDecodeError, LookupError):
-                continue
-
-        return "latin-1"
-
     async def _load_file(self, file_path: Path) -> Document:
         """Load a single text file."""
-        encoding = self._detect_encoding(file_path)
+        encoding = detect_encoding(file_path, self.encoding)
 
-        loop = asyncio.get_event_loop()
-        content = await loop.run_in_executor(
-            None, lambda: file_path.read_text(encoding=encoding)
-        )
+        async with aiofiles.open(file_path, "r", encoding=encoding) as f:
+            content = await f.read()
 
         metadata = {
             "source": str(file_path),
@@ -83,22 +66,5 @@ class TextLoader(BaseLoader):
 
     async def load(self) -> List[Document]:
         """Load text file(s) from source."""
-        documents = []
-
-        if self.source.is_file():
-            doc = await self._load_file(self.source)
-            documents.append(doc)
-
-        elif self.source.is_dir():
-            if self.recursive:
-                files = list(self.source.rglob(self.pattern))
-            else:
-                files = list(self.source.glob(self.pattern))
-
-            tasks = [self._load_file(f) for f in files if f.is_file()]
-            documents = await asyncio.gather(*tasks)
-
-        else:
-            raise FileNotFoundError(f"Source not found: {self.source}")
-
-        return documents
+        files = self._gather_files(self.source, self.pattern, self.recursive)
+        return list(await asyncio.gather(*[self._load_file(f) for f in files]))
