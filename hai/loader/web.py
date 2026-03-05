@@ -1,3 +1,4 @@
+import asyncio
 import re
 from html.parser import HTMLParser
 from typing import Dict, List, Optional
@@ -90,12 +91,17 @@ class WebLoader(BaseLoader):
         absolute_links = [urljoin(base_url, link) for link in links]
         return absolute_links
 
-    async def _fetch_url(self, url: str) -> Document:
-        async with httpx.AsyncClient(
-            timeout=self.timeout, headers=self.headers, follow_redirects=True
-        ) as client:
+    async def _fetch_url(self, client: httpx.AsyncClient, url: str) -> Document:
+        last_exc: Optional[Exception] = None
+        for attempt in range(self.max_retries):
             try:
                 response = await client.get(url)
+                if response.status_code >= 500:
+                    raise httpx.HTTPStatusError(
+                        f"Server error {response.status_code}",
+                        request=response.request,
+                        response=response,
+                    )
                 response.raise_for_status()
 
                 html_content = response.text
@@ -118,16 +124,23 @@ class WebLoader(BaseLoader):
 
                 return Document(content=text_content, metadata=metadata, name=name)
 
-            except httpx.HTTPError as e:
-                return Document(
-                    content="",
-                    metadata={
-                        "source": url,
-                        "error": str(e),
-                        "status": "failed",
-                    },
-                    name=f"error_{urlparse(url).netloc}",
-                )
+            except (httpx.NetworkError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500:
+                    # 4xx — do not retry
+                    return Document(
+                        content="",
+                        metadata={"source": url, "error": str(e), "status": "failed"},
+                        name=f"error_{urlparse(url).netloc}",
+                    )
+                last_exc = e
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(0.5 * (2 ** attempt))
+
+        return Document(
+            content="",
+            metadata={"source": url, "error": str(last_exc), "status": "failed"},
+            name=f"error_{urlparse(url).netloc}",
+        )
 
     async def load(self) -> List[Document]:
         async with httpx.AsyncClient(
@@ -135,10 +148,20 @@ class WebLoader(BaseLoader):
             headers=self.headers,
             follow_redirects=True,
             max_redirects=10,
-        ):
-            documents = []
-            for url in self.urls:
-                doc = await self._fetch_url(url)
-                documents.append(doc)
+        ) as client:
+            results = await asyncio.gather(
+                *[self._fetch_url(client, url) for url in self.urls],
+                return_exceptions=True,
+            )
 
+        documents = []
+        for url, result in zip(self.urls, results):
+            if isinstance(result, Exception):
+                documents.append(Document(
+                    content="",
+                    metadata={"source": url, "error": str(result), "status": "failed"},
+                    name=f"error_{urlparse(url).netloc}",
+                ))
+            else:
+                documents.append(result)
         return documents

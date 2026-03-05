@@ -1,8 +1,12 @@
-from typing import Any, Dict, Optional
+import asyncio
+import warnings
+from typing import Any, Dict, List, Optional
 
+import httpx
 from httpx import AsyncClient
 
 from hai.core import BaseNode
+from hai.tool import Tool
 
 # curl https://api.openai.com/v1/chat/completions \
 #   -H "Content-Type: application/json" \
@@ -76,6 +80,8 @@ class ProviderText(BaseNode):
         max_tokens: Optional[int] = None,
         stream: bool = False,
         response_format: Optional[Dict[str, Any]] = None,
+        max_retries: int = 3,
+        timeout: float = 60.0,
     ):
         super().__init__(name)
         self.api_key = api_key
@@ -85,14 +91,17 @@ class ProviderText(BaseNode):
         self.stream = stream
         self.base_url = base_url
         self.response_format = response_format
+        self.max_retries = max_retries
+        self.timeout = timeout
 
     async def exec(self, context: Dict[str, Any]) -> Any:
         messages = context.get("messages", [])
+        tools: List[Tool] = context.get("tools", [])
 
         if not messages:
             raise ValueError("context 中必須包含 'messages'")
 
-        payload = {
+        payload: Dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "temperature": self.temperature,
@@ -105,16 +114,50 @@ class ProviderText(BaseNode):
         if self.response_format:
             payload["response_format"] = self.response_format
 
+        if tools:
+            payload["tools"] = [t.to_dict() for t in tools]
+            payload["tool_choice"] = "auto"
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
-        async with AsyncClient(timeout=60.0) as client:
+        async with AsyncClient(timeout=self.timeout) as client:
             if self.stream:
-                return await self._stream_request(client, headers, payload, context)
+                return await self._stream_request(client, headers, payload, context, tools)
             else:
-                return await self._request(client, headers, payload, context)
+                return await self._request(client, headers, payload, context, tools)
+
+    async def _post_with_retry(
+        self,
+        client: AsyncClient,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+    ) -> Any:
+        """POST with exponential backoff retry on network errors and 5xx responses."""
+        last_exc: Optional[Exception] = None
+        for attempt in range(self.max_retries):
+            try:
+                response = await client.post(self.base_url, headers=headers, json=payload)
+                if response.status_code >= 500:
+                    raise httpx.HTTPStatusError(
+                        f"Server error {response.status_code}",
+                        request=response.request,
+                        response=response,
+                    )
+                response.raise_for_status()
+                return response.json()
+            except (httpx.NetworkError, httpx.TimeoutException) as e:
+                last_exc = e
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code >= 500:
+                    last_exc = e
+                else:
+                    raise
+            if attempt < self.max_retries - 1:
+                await asyncio.sleep(2**attempt)
+        raise last_exc
 
     async def _request(
         self,
@@ -122,27 +165,143 @@ class ProviderText(BaseNode):
         headers: Dict[str, str],
         payload: Dict[str, Any],
         context: Dict[str, Any],
+        tools: Optional[List[Tool]] = None,
     ) -> str:
-        response = await client.post(self.base_url, headers=headers, json=payload)
-        response.raise_for_status()
+        import json
 
-        data = response.json()
-        content = data["choices"][0]["message"]["content"]
+        tool_map = {t.name: t for t in (tools or [])}
+        messages: List[Dict[str, Any]] = list(payload["messages"])
 
-        context["openai_response"] = data
-        context["assistant_message"] = content
+        while True:
+            current_payload = {**payload, "messages": messages}
+            data = await self._post_with_retry(client, headers, current_payload)
 
-        if self.response_format and self.response_format.get("type") == "json_object":
-            import json
+            if not data.get("choices"):
+                raise ValueError(f"API returned no choices: {data}")
 
+            choice = data["choices"][0]
+            message = choice["message"]
+            finish_reason = choice.get("finish_reason")
+
+            if finish_reason == "tool_calls" and tool_map:
+                messages.append(message)
+
+                for tool_call in message.get("tool_calls", []):
+                    func_name = tool_call["function"]["name"]
+                    func_args = tool_call["function"]["arguments"]
+                    tool_id = tool_call["id"]
+
+                    if func_name in tool_map:
+                        result = await tool_map[func_name].call(func_args)
+                    else:
+                        result = f"Tool '{func_name}' not found"
+
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_id,
+                            "content": result,
+                        }
+                    )
+            else:
+                content = message.get("content", "")
+                context["openai_response"] = data
+                context["assistant_message"] = content
+                context["messages"] = messages
+
+                if self.response_format and self.response_format.get("type") == "json_object":
+                    try:
+                        parsed_content = json.loads(content)
+                        context["parsed_response"] = parsed_content
+                        return parsed_content
+                    except json.JSONDecodeError:
+                        context["parse_error"] = "Failed to parse JSON response"
+
+                return content
+
+    async def _stream_one_turn(
+        self,
+        client: AsyncClient,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+    ):
+        """Stream one LLM turn with retry on network errors and 5xx.
+
+        Returns (full_content, tool_calls_buffer, finish_reason).
+        """
+        import json
+
+        last_exc: Optional[Exception] = None
+        for attempt in range(self.max_retries):
+            full_content = ""
+            tool_calls_buffer: Dict[int, Dict[str, str]] = {}
+            finish_reason = None
+            done_received = False
             try:
-                parsed_content = json.loads(content)
-                context["parsed_response"] = parsed_content
-                return parsed_content
-            except json.JSONDecodeError:
-                context["parse_error"] = "Failed to parse JSON response"
+                async with client.stream("POST", self.base_url, headers=headers, json=payload) as response:
+                    if response.status_code >= 500:
+                        raise httpx.HTTPStatusError(
+                            f"Server error {response.status_code}",
+                            request=response.request,
+                            response=response,
+                        )
+                    response.raise_for_status()
 
-        return content
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            done_received = True
+                            break
+
+                        try:
+                            data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+
+                        if not data.get("choices"):
+                            continue
+
+                        choice = data["choices"][0]
+                        delta = choice.get("delta", {})
+                        finish_reason = choice.get("finish_reason") or finish_reason
+
+                        if "content" in delta and delta["content"]:
+                            chunk = delta["content"]
+                            full_content += chunk
+                            print(chunk, end="", flush=True)
+
+                        for tc_delta in delta.get("tool_calls", []):
+                            idx = tc_delta.get("index", 0)
+                            if idx not in tool_calls_buffer:
+                                tool_calls_buffer[idx] = {"id": "", "name": "", "arguments": ""}
+                            if "id" in tc_delta:
+                                tool_calls_buffer[idx]["id"] += tc_delta["id"]
+                            func = tc_delta.get("function", {})
+                            if "name" in func:
+                                tool_calls_buffer[idx]["name"] += func["name"]
+                            if "arguments" in func:
+                                tool_calls_buffer[idx]["arguments"] += func["arguments"]
+
+                if not done_received and not tool_calls_buffer:
+                    warnings.warn("Stream ended before [DONE] was received; response may be incomplete.", stacklevel=2)
+
+                return full_content, tool_calls_buffer, finish_reason
+
+            except (httpx.NetworkError, httpx.TimeoutException) as e:
+                last_exc = e
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code >= 500:
+                    last_exc = e
+                else:
+                    raise
+
+            if attempt < self.max_retries - 1:
+                await asyncio.sleep(2**attempt)
+
+        raise last_exc
 
     async def _stream_request(
         self,
@@ -150,39 +309,61 @@ class ProviderText(BaseNode):
         headers: Dict[str, str],
         payload: Dict[str, Any],
         context: Dict[str, Any],
+        tools: Optional[List[Tool]] = None,
     ) -> str:
-        full_content = ""
+        tool_map = {t.name: t for t in (tools or [])}
+        messages: List[Dict[str, Any]] = list(payload["messages"])
 
-        async with client.stream(
-            "POST", self.base_url, headers=headers, json=payload
-        ) as response:
-            response.raise_for_status()
+        while True:
+            current_payload = {**payload, "messages": messages}
+            full_content, tool_calls_buffer, finish_reason = await self._stream_one_turn(
+                client, headers, current_payload
+            )
 
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data_str = line[6:]
+            if full_content:
+                print()
 
-                    if data_str == "[DONE]":
-                        break
+            if finish_reason == "tool_calls" and tool_map and tool_calls_buffer:
+                tool_calls_list = [
+                    {
+                        "id": tool_calls_buffer[i]["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tool_calls_buffer[i]["name"],
+                            "arguments": tool_calls_buffer[i]["arguments"],
+                        },
+                    }
+                    for i in sorted(tool_calls_buffer)
+                ]
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": full_content or None,
+                        "tool_calls": tool_calls_list,
+                    }
+                )
 
-                    try:
-                        import json
+                for tool_call in tool_calls_list:
+                    func_name = tool_call["function"]["name"]
+                    func_args = tool_call["function"]["arguments"]
+                    tool_id = tool_call["id"]
 
-                        data = json.loads(data_str)
-                        delta = data["choices"][0]["delta"]
+                    if func_name in tool_map:
+                        result = await tool_map[func_name].call(func_args)
+                    else:
+                        result = f"Tool '{func_name}' not found"
 
-                        if "content" in delta:
-                            content_chunk = delta["content"]
-                            full_content += content_chunk
-                            print(content_chunk, end="", flush=True)
-
-                    except json.JSONDecodeError:
-                        continue
-
-        print()
-        context["assistant_message"] = full_content
-
-        return full_content
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_id,
+                            "content": result,
+                        }
+                    )
+            else:
+                context["assistant_message"] = full_content
+                context["messages"] = messages
+                return full_content
 
 
 class ProviderEmbedding(BaseNode):
@@ -214,7 +395,7 @@ class ProviderEmbedding(BaseNode):
             "Content-Type": "application/json",
         }
 
-        async with AsyncClient(timeout=60.0) as client:
+        async with AsyncClient(timeout=30.0) as client:
             response = await client.post(self.base_url, headers=headers, json=payload)
             response.raise_for_status()
 

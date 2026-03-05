@@ -9,6 +9,9 @@ class AnthropicText(ProviderText):
         model: str = "claude-sonnet-4-5",
         temperature: float = 0.7,
         max_tokens: int = 1500,
+        stream: bool = False,
+        max_retries: int = 3,
+        timeout: float = 60.0,
     ):
         super().__init__(
             name=name,
@@ -17,5 +20,7 @@ class AnthropicText(ProviderText):
             base_url="https://api.anthropic.com/v1/chat/completions",
             temperature=temperature,
             max_tokens=max_tokens,
-            stream=False,
+            stream=stream,
+            max_retries=max_retries,
+            timeout=timeout,
         )

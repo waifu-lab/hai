@@ -177,6 +177,14 @@ class CSVLoader(BaseLoader):
         return documents
 
     async def load(self) -> List[Document]:
+        import warnings
+
         files = self._gather_files(self.source, self.pattern, self.recursive)
-        results = await asyncio.gather(*[self._load_file(f) for f in files])
-        return [doc for docs in results for doc in docs]
+        results = await asyncio.gather(*[self._load_file(f) for f in files], return_exceptions=True)
+        documents = []
+        for file, result in zip(files, results):
+            if isinstance(result, Exception):
+                warnings.warn(f"Failed to load {file}: {result}", stacklevel=2)
+            else:
+                documents.extend(result)
+        return documents

@@ -12,6 +12,10 @@ class Splitter(BaseNode):
         separator: str = "\n",
         keep_separator: bool = True,
     ):
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
+        if chunk_overlap < 0 or chunk_overlap >= chunk_size:
+            raise ValueError(f"chunk_overlap must be >= 0 and < chunk_size ({chunk_size}), got {chunk_overlap}")
         super().__init__(name)
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
@@ -35,10 +39,7 @@ class Splitter(BaseNode):
         if self.separator:
             splits = text.split(self.separator)
             if self.keep_separator:
-                splits = [
-                    f"{s}{self.separator}" if i < len(splits) - 1 else s
-                    for i, s in enumerate(splits)
-                ]
+                splits = [f"{s}{self.separator}" if i < len(splits) - 1 else s for i, s in enumerate(splits)]
         else:
             splits = list(text)
 

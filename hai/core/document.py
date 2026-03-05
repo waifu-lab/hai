@@ -1,3 +1,4 @@
+import copy
 from typing import Any, Dict, Optional
 
 
@@ -9,7 +10,7 @@ class Document:
         name: Optional[str] = None,
     ):
         self.content = content
-        self.metadata = metadata or {}
+        self.metadata = copy.deepcopy(metadata) if metadata else {}
         self.name = name or "untitled"
 
     def get(self, key: str, default: Any = None) -> Any:
