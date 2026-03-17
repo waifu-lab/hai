@@ -76,7 +76,7 @@ def tool(
     name: Optional[str] = None,
     description: str = "",
     parameters: Optional[Dict[str, Any]] = None,
-) -> Callable:
+) -> Callable[[Callable], Tool]:
     """
     Decorator to convert a function into a Tool instance.
 

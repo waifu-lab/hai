@@ -4,9 +4,13 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from httpx import AsyncClient
+from pydantic import BaseModel
 
 from hai.core import BaseNode
 from hai.tool import Tool
+
+
+# TODO: delete add print
 
 # curl https://api.openai.com/v1/chat/completions \
 #   -H "Content-Type: application/json" \
@@ -60,6 +64,15 @@ from hai.tool import Tool
 #   },
 #   "service_tier": "default"
 # }
+
+
+class TurnResult(BaseModel):
+    """Single-turn LLM response. Tool calls are in OpenAI format (not executed)."""
+
+    content: str
+    tool_calls: List[Dict[str, Any]]
+    finish_reason: str
+    usage: Dict[str, int]
 
 
 class ProviderText(BaseNode):
@@ -227,18 +240,22 @@ class ProviderText(BaseNode):
     ):
         """Stream one LLM turn with retry on network errors and 5xx.
 
-        Returns (full_content, tool_calls_buffer, finish_reason).
+        Returns (full_content, tool_calls_buffer, finish_reason, usage).
+        usage dict has keys "input", "output", "total"; zeros if not provided by API.
         """
         import json
+
+        merged_payload = {**payload, "stream_options": {"include_usage": True}}
 
         last_exc: Optional[Exception] = None
         for attempt in range(self.max_retries):
             full_content = ""
             tool_calls_buffer: Dict[int, Dict[str, str]] = {}
             finish_reason = None
+            usage: Dict[str, int] = {"input": 0, "output": 0, "total": 0}
             done_received = False
             try:
-                async with client.stream("POST", self.base_url, headers=headers, json=payload) as response:
+                async with client.stream("POST", self.base_url, headers=headers, json=merged_payload) as response:
                     if response.status_code >= 500:
                         raise httpx.HTTPStatusError(
                             f"Server error {response.status_code}",
@@ -259,6 +276,15 @@ class ProviderText(BaseNode):
                         try:
                             data = json.loads(data_str)
                         except json.JSONDecodeError:
+                            continue
+
+                        if "usage" in data and not data.get("choices"):
+                            raw = data["usage"]
+                            usage = {
+                                "input": raw.get("prompt_tokens", 0),
+                                "output": raw.get("completion_tokens", 0),
+                                "total": raw.get("total_tokens", 0),
+                            }
                             continue
 
                         if not data.get("choices"):
@@ -288,7 +314,7 @@ class ProviderText(BaseNode):
                 if not done_received and not tool_calls_buffer:
                     warnings.warn("Stream ended before [DONE] was received; response may be incomplete.", stacklevel=2)
 
-                return full_content, tool_calls_buffer, finish_reason
+                return full_content, tool_calls_buffer, finish_reason, usage
 
             except (httpx.NetworkError, httpx.TimeoutException) as e:
                 last_exc = e
@@ -316,7 +342,7 @@ class ProviderText(BaseNode):
 
         while True:
             current_payload = {**payload, "messages": messages}
-            full_content, tool_calls_buffer, finish_reason = await self._stream_one_turn(
+            full_content, tool_calls_buffer, finish_reason, _ = await self._stream_one_turn(
                 client, headers, current_payload
             )
 
@@ -365,6 +391,82 @@ class ProviderText(BaseNode):
                 context["messages"] = messages
                 return full_content
 
+    async def call_once(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Tool]] = None,
+        system_prompt: Optional[str] = None,
+    ) -> TurnResult:
+        """Single LLM API call — no tool execution.
+
+        Prepends system_prompt as a system message if provided.
+        Returns TurnResult with tool_calls in normalized OpenAI format.
+        The Agent drives the tool loop; this method only covers one turn.
+        """
+        full_messages: List[Dict[str, Any]] = []
+        if system_prompt:
+            full_messages.append({"role": "system", "content": system_prompt})
+        full_messages.extend(messages)
+
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": full_messages,
+            "temperature": self.temperature,
+        }
+        if self.max_tokens:
+            payload["max_tokens"] = self.max_tokens
+        if self.response_format:
+            payload["response_format"] = self.response_format
+        if tools:
+            payload["tools"] = [t.to_dict() for t in tools]
+            payload["tool_choice"] = "auto"
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        async with AsyncClient(timeout=self.timeout) as client:
+            if self.stream:
+                content, tool_calls_buffer, finish_reason, usage = await self._stream_one_turn(
+                    client, headers, {**payload, "stream": True}
+                )
+                if content:
+                    print()
+                tool_calls = [
+                    {
+                        "id": tool_calls_buffer[i]["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tool_calls_buffer[i]["name"],
+                            "arguments": tool_calls_buffer[i]["arguments"],
+                        },
+                    }
+                    for i in sorted(tool_calls_buffer)
+                ]
+            else:
+                data = await self._post_with_retry(client, headers, {**payload, "stream": False})
+                if not data.get("choices"):
+                    raise ValueError(f"API returned no choices: {data}")
+                choice = data["choices"][0]
+                message = choice["message"]
+                finish_reason = choice.get("finish_reason", "") or ""
+                content = message.get("content", "") or ""
+                tool_calls = message.get("tool_calls", []) or []
+                raw_usage = data.get("usage", {})
+                usage = {
+                    "input": raw_usage.get("prompt_tokens", 0),
+                    "output": raw_usage.get("completion_tokens", 0),
+                    "total": raw_usage.get("total_tokens", 0),
+                }
+
+        return TurnResult(
+            content=content,
+            tool_calls=tool_calls,
+            finish_reason=finish_reason or "",
+            usage=usage,
+        )
+
 
 class ProviderEmbedding(BaseNode):
     def __init__(
@@ -383,7 +485,7 @@ class ProviderEmbedding(BaseNode):
         input_text = context.get("input")
 
         if not input_text:
-            raise ValueError("context 中必須包含 'input'")
+            raise ValueError("'input' is required in context for embedding generation")
 
         payload = {
             "model": self.model,
