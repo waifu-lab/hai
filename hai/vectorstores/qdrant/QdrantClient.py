@@ -113,9 +113,7 @@ class QdrantStore:
             if self.replication_factor is not None:
                 create_params["replication_factor"] = self.replication_factor
             if self.write_consistency_factor is not None:
-                create_params["write_consistency_factor"] = (
-                    self.write_consistency_factor
-                )
+                create_params["write_consistency_factor"] = self.write_consistency_factor
             if self.on_disk_payload is not None:
                 create_params["on_disk_payload"] = self.on_disk_payload
             if self.hnsw_config is not None:
@@ -217,6 +215,30 @@ class QdrantStore:
             "points_count": info.points_count,
             "status": info.status,
         }
+
+    def get(self, point_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a single point by ID. Returns None if not found."""
+        client = self._get_client()
+        results = client.retrieve(
+            collection_name=self.collection_name,
+            ids=[point_id],
+            with_payload=True,
+            with_vectors=False,
+        )
+        if not results:
+            return None
+        point = results[0]
+        return {"id": point.id, "payload": point.payload}
+
+    def delete(self, point_id: str) -> None:
+        """Delete a single point by ID."""
+        from qdrant_client.models import PointIdsList
+
+        client = self._get_client()
+        client.delete(
+            collection_name=self.collection_name,
+            points_selector=PointIdsList(points=[point_id]),
+        )
 
     def delete_collection(self):
         client = self._get_client()

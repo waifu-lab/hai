@@ -2,6 +2,125 @@ from typing import Any, Dict, Optional
 
 from hai.core import BaseNode
 
+_FACTS_SYSTEM_PROMPT = """\
+You are a knowledge graph extraction expert.
+Your job is to extract anchor entities and relationships from text, then return JSON.
+
+Output schema (strict JSON, no extra keys):
+{
+  "entities": [
+    {"name": "<string>", "type": "Person|Organization|Location|Substance|Product"}
+  ],
+  "facts": [
+    {
+      "subject": "<entity name>",
+      "predicate": "<SCREAMING_SNAKE_CASE>",
+      "object": "<entity name>",
+      "fact": "<one natural-language sentence capturing full context>",
+      "confidence": <0.0-1.0>,
+      "valid_from": "<YYYY-MM-DD or null>",
+      "valid_until": "<YYYY-MM-DD or null>"
+    }
+  ]
+}
+"""
+
+_FACTS_USER_TEMPLATE = """\
+<forbidden_entities>
+The following must NEVER be extracted as entities, regardless of context:
+
+- Pronouns — words that substitute for a noun without naming it
+  <examples>he, she, it, they, him, her, them, his, hers, its, their, I, me</examples>
+
+- Abstract concepts or feelings — intangible states with no real-world referent
+  <examples>fair, good, growth, great, happy, joyful, quiet, serious</examples>
+
+- Common nouns — generic object or role words with no unique identity
+  <examples>pet, game, park, road, river, queen, city, book, key, dog, cat, doctor</examples>
+
+- Generic media nouns — content types without a specific title or name
+  <examples>movie, song, book, article, video, podcast, image</examples>
+
+- Generic event nouns — activity types without a specific named instance
+  <examples>party, meeting, concert, trip, vacation, workout, run, walk, flight</examples>
+
+- Broad institutional nouns — category labels without an explicit proper name
+  <examples>company, organization, hospital, school, university, government</examples>
+
+- Temporal expressions — bare time words without a specific named date
+  <examples>morning, tonight, yesterday, last week, next month, recently, soon, later</examples>
+
+- Quantifiers or ordinals — vague amounts or positional references
+  <examples>some, many, few, several, a lot, first, second, the rest, another, others</examples>
+
+- Unnamed persons — Person entities MUST be proper nouns that uniquely identify
+  one individual, not a role, title, or occupation.
+
+  Ask: "Is this a name or a job?"
+    name  → extract.   e.g. Wraith, Dr. Graves, Kelvin
+    job   → FORBIDDEN. e.g. doctor, nurse, teacher, manager, engineer, lawyer,
+                             officer, therapist, surgeon, clerk, driver, chef
+  Possessor qualification does NOT promote a job title into a valid entity:
+    "Wraith's doctor"  → FORBIDDEN (still a job, not a name)
+    "his manager"      → FORBIDDEN
+    "Ivy's dad"        → OK only for kinship terms with possessor, NOT for job titles
+- Bare kinship terms — only extract when qualified with the possessor's name:
+    dad, mom, sister, brother, husband, wife, son, daughter,
+    uncle, aunt, cousin, grandma, grandpa, friend, neighbor, roommate
+    → "Ivy's dad" YES, "dad" NO, "his brother" NO.
+- Abstract conditions, symptoms, or states:
+    insomnia, fatigue, health problems, immune decline, stress, pain, illness ...
+</forbidden_entities>
+
+<allowed_entities>
+Only extract entities that are specifically and uniquely identifiable.
+
+Allowed types:
+  Person       — named individuals with a proper name (Wraith, Dr. Graves)
+  Organization — named institutions, hospitals, companies (City Hospital, Google)
+  Location     — named places, cities, addresses (New York, Central Park)
+  Substance    — named chemicals, foods, drugs (caffeine, aspirin, coffee)
+  Product      — named specific products or brands
+</allowed_entities>
+
+<relationship_rules>
+- Relationships must connect two DISTINCT entities from your "entities" list.
+- `fact` field: one sentence capturing the FULL context — causes, effects, frequency,
+  dates, outcomes — for details NOT modelled as separate entity nodes.
+- predicates in SCREAMING_SNAKE_CASE (LIKES_TO_CONSUME, CAUSES_HARM_TO, VISITS ...)
+- valid_from / valid_until: ISO date if stated or inferable, otherwise null.
+- Every entity MUST appear in at least one fact. No orphan entities.
+- subject/object MUST exactly match a name in your "entities" list.
+- Do NOT create possessive compound names (BAD: "Wraith's insomnia").
+</relationship_rules>
+
+<example>
+Input:
+  "Wraith loves drinking coffee every afternoon. The caffeine in coffee caused Wraith
+   to suffer from chronic insomnia and fatigue. Wraith visited City Hospital in March
+   2024. The doctor advised Wraith to stop drinking coffee."
+
+Correct output:
+  entities: Wraith (Person), coffee (Substance), caffeine (Substance),
+            City Hospital (Organization)
+  — doctor is NOT extracted: no proper name (job title)
+  — insomnia, fatigue are NOT extracted: symptoms, not named entities
+  — afternoon, March 2024 are NOT extracted: temporal expressions
+
+Wrong output (do NOT do this):
+  entities: Wraith (Person), coffee (Substance), caffeine (Substance),
+            City Hospital (Organization),
+            doctor (Person),        ← FORBIDDEN: job title, not a proper name
+            insomnia (Condition),   ← FORBIDDEN: symptom / abstract state
+            fatigue (Condition),    ← FORBIDDEN: symptom / abstract state
+            afternoon (Time)        ← FORBIDDEN: temporal expression
+</example>
+
+<text_to_process>
+{content}
+</text_to_process>
+"""
+
 
 class MetadataExtractor(BaseNode):
     def __init__(
@@ -10,42 +129,21 @@ class MetadataExtractor(BaseNode):
         llm: Optional[BaseNode] = None,
         extraction_type: str = "facts",
         system_prompt: Optional[str] = None,
+        user_prompt_template: Optional[str] = None,
     ):
         super().__init__(name)
         self.llm = llm
         self.extraction_type = extraction_type
-        self.system_prompt = system_prompt or self._get_default_prompt()
+
+        if extraction_type == "facts":
+            self.system_prompt = system_prompt or _FACTS_SYSTEM_PROMPT
+            self.user_prompt_template = user_prompt_template or _FACTS_USER_TEMPLATE
+        else:
+            self.system_prompt = system_prompt or self._get_default_prompt()
+            self.user_prompt_template = None
 
     def _get_default_prompt(self) -> str:
-        if self.extraction_type == "facts":
-            return """You are a fact extraction expert.
-Extract facts as triplets from the text.
-
-Return a JSON object with this structure:
-{
-  "facts": [
-    {
-      "subject": "entity name",
-      "predicate": "relationship type",
-      "object": "related entity or value",
-      "confidence": 0.9
-    }
-  ],
-  "entities": [
-    {
-      "name": "entity name",
-      "type": "Person|Organization|Location|Event|Product|Concept"
-    }
-  ]
-}
-
-Guidelines:
-- Extract only factual statements, not opinions
-- Use clear, normalized predicate names (e.g., "works_at", "located_in")
-- Confidence: 0-1, where 1 is absolutely certain
-- Include all mentioned entities with their types
-"""
-        elif self.extraction_type == "entities":
+        if self.extraction_type == "entities":
             return """Extract all entities from the text with their types.
 
 Return a JSON object:
@@ -59,8 +157,7 @@ Return a JSON object:
   ]
 }
 """
-        else:
-            return "Extract structured information from the text as JSON."
+        return "Extract structured information from the text as JSON."
 
     async def exec(self, context: Dict[str, Any]) -> Dict[str, Any]:
         chunks = context.get("chunks", [])
@@ -79,10 +176,15 @@ Return a JSON object:
             if not content.strip():
                 continue
 
+            if self.user_prompt_template:
+                user_content = self.user_prompt_template.format(content=content)
+            else:
+                user_content = content
+
             llm_context = {
                 "messages": [
                     {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": content},
+                    {"role": "user", "content": user_content},
                 ]
             }
 
@@ -199,9 +301,7 @@ class EntityExtractor(MetadataExtractor):
                         "sources": [],
                     }
 
-                entity_map[name]["sources"].append(
-                    f"{item['chunk_name']}/chunk_{item['chunk_id']}"
-                )
+                entity_map[name]["sources"].append(f"{item['chunk_name']}/chunk_{item['chunk_id']}")
 
         all_entities = list(entity_map.values())
 

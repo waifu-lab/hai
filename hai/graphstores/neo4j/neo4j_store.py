@@ -1,8 +1,9 @@
-import uuid
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from hai.graphstores.base import BaseGraphStore
+
+if TYPE_CHECKING:
+    from neo4j import AsyncDriver
 
 
 class Neo4jStore(BaseGraphStore):
@@ -19,96 +20,55 @@ class Neo4jStore(BaseGraphStore):
         self.username = username
         self.password = password
         self.database = database
-        self.driver = None
+        self.driver: Optional["AsyncDriver"] = None
+
+    def _get_driver(self) -> "AsyncDriver":
+        if not self.driver:
+            raise RuntimeError("Neo4j driver not initialized. Call connect() first.")
+        return self.driver
 
     async def connect(self) -> None:
         try:
             from neo4j import AsyncGraphDatabase
         except ImportError as exc:
-            msg = "neo4j package required. Install: pip install neo4j"
-            raise ImportError(msg) from exc
+            raise ImportError("neo4j package required. Install: pip install neo4j") from exc
 
-        self.driver = AsyncGraphDatabase.driver(
-            self.uri, auth=(self.username, self.password)
-        )
-
-        async with self.driver.session(database=self.database) as session:
+        self.driver = AsyncGraphDatabase.driver(self.uri, auth=(self.username, self.password))
+        async with self._get_driver().session(database=self.database) as session:
             await session.run("RETURN 1")
 
     async def close(self) -> None:
         if self.driver:
             await self.driver.close()
 
-    async def add_entity(
-        self,
-        name: str,
-        entity_type: str,
-        properties: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        entity_id = str(uuid.uuid4())
-        props = properties or {}
-        props.update(
-            {
-                "id": entity_id,
-                "name": name,
-                "type": entity_type,
-                "created_at": datetime.utcnow().isoformat(),
-            }
-        )
+    async def execute(self, query: str, parameters: Optional[Dict[str, Any]] = None) -> None:
+        driver = self._get_driver()
+        async with driver.session(database=self.database) as session:
+            await session.run(query=query, parameters=parameters or {})  # type: ignore[arg-type]
 
-        query = """
-        MERGE (e:Entity {name: $name, type: $type})
-        ON CREATE SET e = $props
-        ON MATCH SET e.updated_at = $timestamp
-        RETURN e.id as id
+    async def query(self, query: str, parameters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        driver = self._get_driver()
+        async with driver.session(database=self.database) as session:
+            result = await session.run(query=query, parameters=parameters or {})  # type: ignore[arg-type]
+            return await result.data()
+
+    async def search(self, index_name: str, query_text: str, limit: int = 10) -> List[Dict[str, Any]]:
+        cypher = """
+        CALL db.index.fulltext.queryNodes($index_name, $query_text)
+        YIELD node, score
+        RETURN node, score
+        ORDER BY score DESC
+        LIMIT $limit
         """
-
-        async with self.driver.session(database=self.database) as session:
+        driver = self._get_driver()
+        async with driver.session(database=self.database) as session:
             result = await session.run(
-                query,
-                name=name,
-                type=entity_type,
-                props=props,
-                timestamp=datetime.utcnow().isoformat(),
+                query=cypher,
+                parameters={
+                    "index_name": index_name,
+                    "query_text": query_text,
+                    "limit": limit,
+                },
             )
-            record = await result.single()
-            return record["id"] if record else entity_id
-
-    async def get_entity(self, entity_id: str) -> Optional[Dict[str, Any]]:
-        """Get entity by ID."""
-        query = """
-        MATCH (e:Entity {id: $entity_id})
-        RETURN e
-        """
-
-        async with self.driver.session(database=self.database) as session:
-            result = await session.run(query, entity_id=entity_id)
-            record = await result.single()
-            if record:
-                return dict(record["e"])
-            return None
-
-    async def search_entities(
-        self, name: str, entity_type: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        if entity_type:
-            query = """
-            MATCH (e:Entity)
-            WHERE e.name CONTAINS $name AND e.type = $entity_type
-            RETURN e
-            LIMIT 20
-            """
-            params = {"name": name, "entity_type": entity_type}
-        else:
-            query = """
-            MATCH (e:Entity)
-            WHERE e.name CONTAINS $name
-            RETURN e
-            LIMIT 20
-            """
-            params = {"name": name}
-
-        async with self.driver.session(database=self.database) as session:
-            result = await session.run(query, **params)
             records = await result.data()
-            return [dict(record["e"]) for record in records]
+            return [{"node": dict(r["node"]), "score": r["score"]} for r in records]
