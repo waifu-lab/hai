@@ -1,4 +1,4 @@
-from .providers import ProviderEmbedding, ProviderText
+from .providers import ProviderEmbedding, ProviderSTT, ProviderTTS, ProviderText
 
 
 class OpenAI(ProviderText):
@@ -38,4 +38,48 @@ class OpenAIEmbedding(ProviderEmbedding):
             api_key=api_key,
             model=model,
             base_url="https://api.openai.com/v1/embeddings",
+        )
+
+
+class OpenAISTT(ProviderSTT):
+    def __init__(
+        self,
+        name: str = "OpenAISTT",
+        api_key: str = "your_openai_api_key",
+        model: str = "whisper-1",
+        language: str | None = None,
+        temperature: float = 0.0,
+        timeout: float = 60.0,
+    ):
+        super().__init__(
+            name=name,
+            api_key=api_key,
+            base_url="https://api.openai.com/v1/audio/transcriptions",
+            model=model,
+            language=language,
+            temperature=temperature,
+            timeout=timeout,
+        )
+
+
+class OpenAITTS(ProviderTTS):
+    def __init__(
+        self,
+        name: str = "OpenAITTS",
+        api_key: str = "your_openai_api_key",
+        model: str = "tts-1",
+        voice: str = "nova",
+        response_format: str = "mp3",
+        speed: float = 1.0,
+        timeout: float = 60.0,
+    ):
+        super().__init__(
+            name=name,
+            api_key=api_key,
+            base_url="https://api.openai.com/v1/audio/speech",
+            model=model,
+            voice=voice,
+            response_format=response_format,
+            speed=speed,
+            timeout=timeout,
         )

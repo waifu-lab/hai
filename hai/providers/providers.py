@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from hai.core import BaseNode
 from hai.tool import Tool
 
-
 # TODO: delete add print
 
 # curl https://api.openai.com/v1/chat/completions \
@@ -466,6 +465,105 @@ class ProviderText(BaseNode):
             finish_reason=finish_reason or "",
             usage=usage,
         )
+
+
+class ProviderSTT(BaseNode):
+    def __init__(
+        self,
+        name: str,
+        api_key: str,
+        base_url: str,
+        model: str = "whisper-1",
+        language: Optional[str] = None,
+        temperature: float = 0.0,
+        timeout: float = 60.0,
+    ) -> None:
+        super().__init__(name)
+        self.api_key = api_key
+        self.base_url = base_url
+        self.model = model
+        self.language = language
+        self.temperature = temperature
+        self.timeout = timeout
+
+    async def exec(self, context: Dict[str, Any]) -> Any:
+        audio: bytes = context["audio"]
+        fmt: str = context.get("format", "webm")
+        language: Optional[str] = context.get("language", self.language)
+        text = await self.transcribe(audio, fmt, language)
+        context["text"] = text
+        return text
+
+    async def transcribe(
+        self,
+        audio: bytes,
+        format: str = "webm",
+        language: Optional[str] = None,
+    ) -> str:
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        files = {"file": (f"audio.{format}", audio, f"audio/{format}")}
+        data: Dict[str, Any] = {
+            "model": self.model,
+            "response_format": "text",
+            "temperature": str(self.temperature),
+        }
+        if language or self.language:
+            data["language"] = language or self.language
+
+        async with AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(
+                self.base_url,
+                headers=headers,
+                files=files,
+                data=data,
+            )
+            response.raise_for_status()
+            return response.text.strip()
+
+
+class ProviderTTS(BaseNode):
+    def __init__(
+        self,
+        name: str,
+        api_key: str,
+        base_url: str,
+        model: str = "tts-1",
+        voice: str = "nova",
+        response_format: str = "mp3",
+        speed: float = 1.0,
+        timeout: float = 60.0,
+    ) -> None:
+        super().__init__(name)
+        self.api_key = api_key
+        self.base_url = base_url
+        self.model = model
+        self.voice = voice
+        self.response_format = response_format
+        self.speed = speed
+        self.timeout = timeout
+
+    async def exec(self, context: Dict[str, Any]) -> Any:
+        text: str = context["text"]
+        audio = await self.synthesize(text)
+        context["audio"] = audio
+        return audio
+
+    async def synthesize(self, text: str) -> bytes:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "input": text,
+            "voice": self.voice,
+            "response_format": self.response_format,
+            "speed": self.speed,
+        }
+        async with AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(self.base_url, headers=headers, json=payload)
+            response.raise_for_status()
+            return response.content
 
 
 class ProviderEmbedding(BaseNode):
