@@ -1,4 +1,4 @@
-from .providers import ProviderEmbedding, ProviderSTT, ProviderTTS, ProviderText
+from .providers import ProviderEmbedding, ProviderSTT, ProviderText, ProviderTTS
 
 
 class OpenAI(ProviderText):

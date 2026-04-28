@@ -1,6 +1,8 @@
 import asyncio
+import base64
+import inspect
 import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import httpx
 from httpx import AsyncClient
@@ -8,8 +10,6 @@ from pydantic import BaseModel
 
 from hai.core import BaseNode
 from hai.tool import Tool
-
-# TODO: delete add print
 
 # curl https://api.openai.com/v1/chat/completions \
 #   -H "Content-Type: application/json" \
@@ -236,6 +236,7 @@ class ProviderText(BaseNode):
         client: AsyncClient,
         headers: Dict[str, str],
         payload: Dict[str, Any],
+        on_chunk: Optional[Any] = None,
     ):
         """Stream one LLM turn with retry on network errors and 5xx.
 
@@ -296,7 +297,11 @@ class ProviderText(BaseNode):
                         if "content" in delta and delta["content"]:
                             chunk = delta["content"]
                             full_content += chunk
-                            print(chunk, end="", flush=True)
+                            if on_chunk is not None:
+                                if inspect.iscoroutinefunction(on_chunk):
+                                    await on_chunk(chunk)
+                                else:
+                                    on_chunk(chunk)
 
                         for tc_delta in delta.get("tool_calls", []):
                             idx = tc_delta.get("index", 0)
@@ -346,7 +351,7 @@ class ProviderText(BaseNode):
             )
 
             if full_content:
-                print()
+                ...
 
             if finish_reason == "tool_calls" and tool_map and tool_calls_buffer:
                 tool_calls_list = [
@@ -395,6 +400,7 @@ class ProviderText(BaseNode):
         messages: List[Dict[str, Any]],
         tools: Optional[List[Tool]] = None,
         system_prompt: Optional[str] = None,
+        on_chunk: Optional[Any] = None,
     ) -> TurnResult:
         """Single LLM API call — no tool execution.
 
@@ -428,10 +434,10 @@ class ProviderText(BaseNode):
         async with AsyncClient(timeout=self.timeout) as client:
             if self.stream:
                 content, tool_calls_buffer, finish_reason, usage = await self._stream_one_turn(
-                    client, headers, {**payload, "stream": True}
+                    client, headers, {**payload, "stream": True}, on_chunk=on_chunk
                 )
                 if content:
-                    print()
+                    ...
                 tool_calls = [
                     {
                         "id": tool_calls_buffer[i]["id"],
@@ -500,6 +506,7 @@ class ProviderSTT(BaseNode):
         format: str = "webm",
         language: Optional[str] = None,
     ) -> str:
+        """將音訊位元組轉為文字。"""
         headers = {"Authorization": f"Bearer {self.api_key}"}
         files = {"file": (f"audio.{format}", audio, f"audio/{format}")}
         data: Dict[str, Any] = {
@@ -549,6 +556,7 @@ class ProviderTTS(BaseNode):
         return audio
 
     async def synthesize(self, text: str) -> bytes:
+        """將文字合成為音訊位元組（預設 mp3）。"""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -610,3 +618,36 @@ class ProviderEmbedding(BaseNode):
                 context["embedding"] = embedding
                 context["response"] = data
                 return embedding
+
+
+ImageDetail = Literal["auto", "low", "high"]
+ImageInput = Union[str, bytes]
+
+
+def _to_image_url(image: ImageInput, mime_type: str = "image/jpeg") -> str:
+    if isinstance(image, bytes):
+        encoded = base64.b64encode(image).decode("utf-8")
+        return f"data:{mime_type};base64,{encoded}"
+    return image
+
+
+def vision_message(
+    text: str,
+    images: Union[ImageInput, List[ImageInput]],
+    detail: ImageDetail = "auto",
+    mime_type: str = "image/jpeg",
+) -> Dict[str, Any]:
+    if not isinstance(images, list):
+        images = [images]
+
+    content: List[Dict[str, Any]] = [{"type": "text", "text": text}]
+    for img in images:
+        url = _to_image_url(img, mime_type)
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": url, "detail": detail},
+            }
+        )
+
+    return {"role": "user", "content": content}
