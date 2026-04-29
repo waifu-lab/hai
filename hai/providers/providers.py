@@ -2,7 +2,7 @@ import asyncio
 import base64
 import inspect
 import warnings
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Union
 
 import httpx
 from httpx import AsyncClient
@@ -572,6 +572,26 @@ class ProviderTTS(BaseNode):
             response = await client.post(self.base_url, headers=headers, json=payload)
             response.raise_for_status()
             return response.content
+
+    async def synthesize_stream(self, text: str, chunk_size: int = 4096) -> "AsyncIterator[bytes]":
+        """串流合成音訊"""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "input": text,
+            "voice": self.voice,
+            "response_format": self.response_format,
+            "speed": self.speed,
+        }
+        async with AsyncClient(timeout=self.timeout) as client:
+            async with client.stream("POST", self.base_url, headers=headers, json=payload) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes(chunk_size):
+                    if chunk:
+                        yield chunk
 
 
 class ProviderEmbedding(BaseNode):
