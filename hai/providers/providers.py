@@ -74,6 +74,29 @@ class TurnResult(BaseModel):
     usage: Dict[str, int]
 
 
+class ProviderInfo(BaseNode):
+    def __init__(
+        self,
+        name: str,
+        api_key: str,
+        base_url: str,
+    ):
+        super().__init__(name)
+        self.api_key = api_key
+        self.base_url = base_url
+
+    async def models(self) -> List[str]:
+        async with AsyncClient() as client:
+            response = await client.get(
+                f"{self.base_url}/models",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            res = response.json()
+            return [item["id"] for item in res.get("data", [])]
+
+
 class ProviderText(BaseNode):
     """
     OpenAI
@@ -105,6 +128,10 @@ class ProviderText(BaseNode):
         self.response_format = response_format
         self.max_retries = max_retries
         self.timeout = timeout
+
+    def _extra_payload(self) -> Dict[str, Any]:
+        """Subclasses override to inject provider-specific payload fields (e.g. thinking, reasoning_effort)."""
+        return {}
 
     async def exec(self, context: Dict[str, Any]) -> Any:
         messages = context.get("messages", [])
@@ -425,6 +452,7 @@ class ProviderText(BaseNode):
         if tools:
             payload["tools"] = [t.to_dict() for t in tools]
             payload["tool_choice"] = "auto"
+        payload.update(self._extra_payload())
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -506,7 +534,7 @@ class ProviderSTT(BaseNode):
         format: str = "webm",
         language: Optional[str] = None,
     ) -> str:
-        """將音訊位元組轉為文字。"""
+        """Convert audio bytes to text."""
         headers = {"Authorization": f"Bearer {self.api_key}"}
         files = {"file": (f"audio.{format}", audio, f"audio/{format}")}
         data: Dict[str, Any] = {
@@ -556,7 +584,7 @@ class ProviderTTS(BaseNode):
         return audio
 
     async def synthesize(self, text: str) -> bytes:
-        """將文字合成為音訊位元組（預設 mp3）。"""
+        """Convert text to audio bytes (default is mp3)."""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -574,7 +602,7 @@ class ProviderTTS(BaseNode):
             return response.content
 
     async def synthesize_stream(self, text: str, chunk_size: int = 4096) -> "AsyncIterator[bytes]":
-        """串流合成音訊"""
+        """Stream audio synthesis."""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -638,36 +666,3 @@ class ProviderEmbedding(BaseNode):
                 context["embedding"] = embedding
                 context["response"] = data
                 return embedding
-
-
-ImageDetail = Literal["auto", "low", "high"]
-ImageInput = Union[str, bytes]
-
-
-def _to_image_url(image: ImageInput, mime_type: str = "image/jpeg") -> str:
-    if isinstance(image, bytes):
-        encoded = base64.b64encode(image).decode("utf-8")
-        return f"data:{mime_type};base64,{encoded}"
-    return image
-
-
-def vision_message(
-    text: str,
-    images: Union[ImageInput, List[ImageInput]],
-    detail: ImageDetail = "auto",
-    mime_type: str = "image/jpeg",
-) -> Dict[str, Any]:
-    if not isinstance(images, list):
-        images = [images]
-
-    content: List[Dict[str, Any]] = [{"type": "text", "text": text}]
-    for img in images:
-        url = _to_image_url(img, mime_type)
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": url, "detail": detail},
-            }
-        )
-
-    return {"role": "user", "content": content}

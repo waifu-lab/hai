@@ -1,7 +1,18 @@
-from .providers import ProviderEmbedding, ProviderSTT, ProviderText, ProviderTTS
+from typing import Any, Dict, Literal, Optional
+
+from .providers import ProviderEmbedding, ProviderInfo, ProviderSTT, ProviderText, ProviderTTS
 
 
-class OpenAI(ProviderText):
+class OpenAI(ProviderInfo):
+    def __init__(self, name: str = "OpenAI"):
+        super().__init__(
+            name=name,
+            api_key="your_openai_api_key",
+            base_url="https://api.openai.com/v1",
+        )
+
+
+class OpenAIText(ProviderText):
     def __init__(
         self,
         name: str = "OpenAI",
@@ -12,6 +23,7 @@ class OpenAI(ProviderText):
         stream: bool = False,
         max_retries: int = 3,
         timeout: float = 60.0,
+        reasoning_effort: Optional[Literal["low", "medium", "high"]] = None,
     ):
         super().__init__(
             name=name,
@@ -24,6 +36,12 @@ class OpenAI(ProviderText):
             max_retries=max_retries,
             timeout=timeout,
         )
+        self.reasoning_effort = reasoning_effort
+
+    def _extra_payload(self) -> Dict[str, Any]:
+        if self.reasoning_effort is not None:
+            return {"reasoning_effort": self.reasoning_effort}
+        return {}
 
 
 class OpenAIEmbedding(ProviderEmbedding):

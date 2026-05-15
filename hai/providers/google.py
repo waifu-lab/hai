@@ -1,4 +1,29 @@
-from .providers import ProviderEmbedding, ProviderText
+from typing import List, override
+
+from httpx import AsyncClient
+
+from .providers import ProviderEmbedding, ProviderInfo, ProviderText
+
+
+class Google(ProviderInfo):
+    def __init__(self, name: str = "Google"):
+        super().__init__(
+            name=name,
+            api_key="your_google_api_key",
+            base_url="https://generativelanguage.googleapis.com/v1beta",
+        )
+
+    @override
+    async def models(self) -> List[str]:
+        async with AsyncClient() as client:
+            response = await client.get(
+                f"{self.base_url}/models",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            res = response.json()
+            return [item["baseModelId"] for item in res.get("data", [])]
 
 
 class GoogleText(ProviderText):

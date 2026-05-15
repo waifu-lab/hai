@@ -1,7 +1,16 @@
-from .providers import ProviderText
+from .providers import ProviderInfo, ProviderText
 
 
-class Ollama(ProviderText):
+class Ollama(ProviderInfo):
+    def __init__(self, name: str = "Ollama"):
+        super().__init__(
+            name=name,
+            api_key="your_ollama_api_key",
+            base_url="http://localhost:11434/v1",
+        )
+
+
+class OllamaText(ProviderText):
     def __init__(
         self,
         name: str = "Ollama",
