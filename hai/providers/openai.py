@@ -24,6 +24,7 @@ class OpenAIText(ProviderText):
         max_retries: int = 3,
         timeout: float = 60.0,
         reasoning_effort: Optional[Literal["low", "medium", "high"]] = None,
+        extra_params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(
             name=name,
@@ -37,11 +38,14 @@ class OpenAIText(ProviderText):
             timeout=timeout,
         )
         self.reasoning_effort = reasoning_effort
+        self.extra_params = extra_params or {}
 
     def _extra_payload(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
         if self.reasoning_effort is not None:
-            return {"reasoning_effort": self.reasoning_effort}
-        return {}
+            payload["reasoning_effort"] = self.reasoning_effort
+        payload.update(self.extra_params)
+        return payload
 
 
 class OpenAIEmbedding(ProviderEmbedding):
