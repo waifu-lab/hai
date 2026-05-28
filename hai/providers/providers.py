@@ -192,6 +192,9 @@ class ProviderText(BaseNode):
             except httpx.HTTPStatusError as e:
                 if e.response.status_code >= 500:
                     last_exc = e
+                elif e.response.status_code == 429:
+                    last_exc = e  # TODO:
+                    raise
                 else:
                     raise
             if attempt < self.max_retries - 1:
@@ -350,13 +353,19 @@ class ProviderText(BaseNode):
             except (httpx.NetworkError, httpx.TimeoutException) as e:
                 last_exc = e
             except httpx.HTTPStatusError as e:
-                if e.response.status_code >= 500:
+                if e.response.status_code == 429 or e.response.status_code >= 500:
+                    if e.response.status_code == 429:
+                        pass  # TODO:
                     last_exc = e
                 else:
                     raise
 
             if attempt < self.max_retries - 1:
-                await asyncio.sleep(2**attempt)
+                delay = 2**attempt
+                if isinstance(last_exc, httpx.HTTPStatusError) and last_exc.response.status_code == 429:
+                    retry_after = last_exc.response.headers.get("retry-after")
+                    delay = float(retry_after) if retry_after else float(5 * (2**attempt))
+                await asyncio.sleep(delay)
 
         raise last_exc
 
