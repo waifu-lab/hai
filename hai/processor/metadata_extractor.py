@@ -225,11 +225,15 @@ class FactExtractor(MetadataExtractor):
         name: str = "FactExtractor",
         llm: Optional[BaseNode] = None,
         min_confidence: float = 0.7,
+        system_prompt: Optional[str] = None,
+        user_prompt_template: Optional[str] = None,
     ):
         super().__init__(
             name=name,
             llm=llm,
             extraction_type="facts",
+            system_prompt=system_prompt,
+            user_prompt_template=user_prompt_template,
         )
         self.min_confidence = min_confidence
 
