@@ -2,6 +2,7 @@ from typing import Any, Dict, Literal, Optional, Type
 
 from hai.providers.anthropic import Anthropic, AnthropicText
 from hai.providers.google import Google, GoogleEmbedding, GoogleText
+from hai.providers.gptsovits import GPTSoVITS, GPTSoVITSTTS
 from hai.providers.ollama import Ollama, OllamaText
 from hai.providers.openai import (
     OpenAI,
@@ -19,7 +20,7 @@ from hai.providers.providers import (
     TurnResult,
 )
 
-PROVIDERS = ["openai", "anthropic", "google", "ollama"]
+PROVIDERS = ["openai", "anthropic", "google", "ollama", "gptsovits"]
 
 PROVIDER_REGISTRY: Dict[str, Dict[str, Type[Any]]] = {
     "openai": {
@@ -41,6 +42,10 @@ PROVIDER_REGISTRY: Dict[str, Dict[str, Type[Any]]] = {
     "ollama": {
         "info": Ollama,
         "text": OllamaText,
+    },
+    "gptsovits": {
+        "info": GPTSoVITS,
+        "tts": GPTSoVITSTTS,
     },
 }
 
@@ -109,4 +114,6 @@ __all__ = [
     "GoogleEmbedding",
     "Ollama",
     "OllamaText",
+    "GPTSoVITS",
+    "GPTSoVITSTTS",
 ]
