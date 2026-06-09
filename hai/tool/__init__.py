@@ -1,3 +1,3 @@
-from .toolcalling import Tool, tool
+from .toolcalling import ImageResult, Tool, tool
 
-__all__ = ["Tool", "tool"]
+__all__ = ["ImageResult", "Tool", "tool"]

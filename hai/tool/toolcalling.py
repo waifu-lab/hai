@@ -1,6 +1,14 @@
 import inspect
 import json
-from typing import Any, Callable, Dict, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional, Union
+
+
+@dataclass
+class ImageResult:
+    data: bytes
+    media_type: str = "image/png"
+    description: str = ""
 
 
 class Tool:
@@ -50,11 +58,13 @@ class Tool:
             },
         }
 
-    async def call(self, arguments: str) -> str:
+    async def call(self, arguments: str) -> Union[str, ImageResult]:
         """Parse arguments JSON string and invoke the wrapped function.
 
         Returns an error string instead of raising if the function fails,
         so that tool execution errors do not abort the LLM conversation loop.
+        ImageResult is returned as-is so the caller can inject it as a proper
+        multimodal user message instead of stringifying the bytes.
         """
         try:
             kwargs = json.loads(arguments)
@@ -69,6 +79,8 @@ class Tool:
         except Exception as e:
             return f"Tool error ({self.name}): {e}"
 
+        if isinstance(result, ImageResult):
+            return result
         return str(result)
 
 

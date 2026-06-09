@@ -51,7 +51,7 @@ def create_text_provider(
     api_key: Optional[str] = None,
     *,
     temperature: float = 0.7,
-    max_tokens: int = 1500,
+    max_tokens: Optional[int] = 1500,
     stream: bool = False,
     reasoning_effort: Optional[Literal["low", "medium", "high"]] = None,
     extra_params: Optional[Dict[str, Any]] = None,

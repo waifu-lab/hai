@@ -1,6 +1,6 @@
 import asyncio
-import base64
 import inspect
+import logging
 import warnings
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Union
 
@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from hai.core import BaseNode
 from hai.tool import Tool
 
+logger = logging.getLogger(__name__)
 # curl https://api.openai.com/v1/chat/completions \
 #   -H "Content-Type: application/json" \
 #   -H "Authorization: Bearer $OPENAI_API_KEY" \
@@ -292,7 +293,16 @@ class ProviderText(BaseNode):
                             request=response.request,
                             response=response,
                         )
-                    response.raise_for_status()
+                    if response.status_code >= 400:
+                        body = await response.aread()
+                        # TODO: Replace with a custom error
+                        logger.error(
+                            "HTTP %s from %s: %s",
+                            response.status_code,
+                            self.base_url,
+                            body.decode(errors="replace"),
+                        )
+                        response.raise_for_status()
 
                     async for line in response.aiter_lines():
                         if not line.startswith("data: "):
