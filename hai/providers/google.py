@@ -1,4 +1,4 @@
-from typing import List, override
+from typing import List
 
 from httpx import AsyncClient
 
@@ -6,14 +6,18 @@ from .providers import ProviderEmbedding, ProviderInfo, ProviderText
 
 
 class Google(ProviderInfo):
-    def __init__(self, name: str = "Google"):
+    def __init__(
+        self,
+        name: str = "Google",
+        api_key: str = "your_google_api_key",
+        base_url: str = "https://generativelanguage.googleapis.com/v1beta",
+    ):
         super().__init__(
             name=name,
-            api_key="your_google_api_key",
-            base_url="https://generativelanguage.googleapis.com/v1beta",
+            api_key=api_key,
+            base_url=base_url,
         )
 
-    @override
     async def models(self) -> List[str]:
         async with AsyncClient() as client:
             response = await client.get(
@@ -34,6 +38,9 @@ class GoogleText(ProviderText):
         model: str = "gemini-2.5-flash",
         temperature: float = 0.7,
         max_tokens: int = 1500,
+        stream: bool = False,
+        max_retries: int = 3,
+        timeout: float = 60.0,
     ):
         super().__init__(
             name=name,
@@ -42,7 +49,9 @@ class GoogleText(ProviderText):
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
             temperature=temperature,
             max_tokens=max_tokens,
-            stream=False,
+            stream=stream,
+            max_retries=max_retries,
+            timeout=timeout,
         )
 
 
@@ -59,27 +68,3 @@ class GoogleEmbedding(ProviderEmbedding):
             model=model,
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/embeddings",
         )
-
-
-# if __name__ == "__main__":
-#     google_provider = GoogleText(
-#         api_key="",
-#         model="gemini-2.5-flash",
-#         temperature=0.7,
-#         max_tokens=1500,
-#     )
-#     print(google_provider)
-#     context = {
-#         "messages": [
-#             {"role": "system", "content": "你是一個有幫助的助手"},
-#             {"role": "user", "content": "請用繁體中文介紹台灣的夜市文化, 200字以內"},
-#         ]
-#     }
-
-#     import asyncio
-
-#     async def run():
-#         response = await google_provider.exec(context)
-#         print(response)
-
-#     asyncio.run(run())

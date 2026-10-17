@@ -1,6 +1,9 @@
 from typing import Any, Dict, Optional
 
 from hai.core import BaseNode
+import logging
+
+logger = logging.getLogger(__name__)
 
 _FACTS_SYSTEM_PROMPT = """\
 You are a knowledge graph extraction expert.
@@ -123,6 +126,13 @@ Wrong output (do NOT do this):
 
 
 class MetadataExtractor(BaseNode):
+    """Ask *llm* (a ProviderText) to extract structured JSON from every chunk.
+
+    Context:
+        reads: ``chunks`` (List[dict] from ChunkProcessor)
+        writes: ``extracted_metadata`` (List[dict], one per chunk), ``metadata_count`` (int)
+    """
+
     def __init__(
         self,
         name: str = "MetadataExtractor",
@@ -131,6 +141,14 @@ class MetadataExtractor(BaseNode):
         system_prompt: Optional[str] = None,
         user_prompt_template: Optional[str] = None,
     ):
+        """
+        Args:
+            system_prompt: Overrides the default system prompt of *extraction_type*.
+            user_prompt_template: User message per chunk. Every ``{content}`` is replaced
+                with the chunk text; other braces (e.g. JSON examples) are left as-is and
+                need no escaping. Without a template the chunk text is sent unchanged
+                (``"facts"`` has a built-in template).
+        """
         super().__init__(name)
         self.llm = llm
         self.extraction_type = extraction_type
@@ -140,7 +158,7 @@ class MetadataExtractor(BaseNode):
             self.user_prompt_template = user_prompt_template or _FACTS_USER_TEMPLATE
         else:
             self.system_prompt = system_prompt or self._get_default_prompt()
-            self.user_prompt_template = None
+            self.user_prompt_template = user_prompt_template
 
     def _get_default_prompt(self) -> str:
         if self.extraction_type == "entities":
@@ -177,7 +195,7 @@ Return a JSON object:
                 continue
 
             if self.user_prompt_template:
-                user_content = self.user_prompt_template.format(content=content)
+                user_content = self.user_prompt_template.replace("{content}", content)
             else:
                 user_content = content
 
@@ -210,7 +228,7 @@ Return a JSON object:
                 all_metadata.append(chunk_metadata)
 
             except Exception as e:
-                print(f"Error extracting metadata from chunk: {e}")
+                logger.error(f"Error extracting metadata from chunk: {e}")
                 continue
 
         context["extracted_metadata"] = all_metadata
@@ -220,6 +238,14 @@ Return a JSON object:
 
 
 class FactExtractor(MetadataExtractor):
+    """Extract knowledge-graph entities and facts, keeping facts at or above *min_confidence*.
+
+    Context:
+        reads: ``chunks`` (List[dict])
+        writes: everything MetadataExtractor writes, plus ``extracted_facts`` (List[dict]),
+            ``extracted_entities`` (List[dict]), ``fact_count`` (int), ``entity_count`` (int)
+    """
+
     def __init__(
         self,
         name: str = "FactExtractor",
@@ -273,15 +299,27 @@ class FactExtractor(MetadataExtractor):
 
 
 class EntityExtractor(MetadataExtractor):
+    """Extract entities and merge them by name across chunks, summing mentions.
+
+    Context:
+        reads: ``chunks`` (List[dict])
+        writes: everything MetadataExtractor writes, plus ``extracted_entities`` (List[dict]),
+            ``entity_count`` (int)
+    """
+
     def __init__(
         self,
         name: str = "EntityExtractor",
         llm: Optional[BaseNode] = None,
+        system_prompt: Optional[str] = None,
+        user_prompt_template: Optional[str] = None,
     ):
         super().__init__(
             name=name,
             llm=llm,
             extraction_type="entities",
+            system_prompt=system_prompt,
+            user_prompt_template=user_prompt_template,
         )
 
     async def exec(self, context: Dict[str, Any]) -> Dict[str, Any]:

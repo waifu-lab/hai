@@ -4,6 +4,16 @@ from hai.core import BaseNode
 
 
 class ChunkProcessor(BaseNode):
+    """Split every document with *splitter* and flatten the pieces into chunk dicts.
+
+    Each chunk dict holds ``content``, ``name``, ``chunk_index``, ``total_chunks``
+    and the document's metadata. Without a splitter each document becomes one chunk.
+
+    Context:
+        reads: ``documents`` (List[Document])
+        writes: ``chunks`` (List[dict]), ``total_chunks`` (int)
+    """
+
     def __init__(
         self,
         name: str = "ChunkProcessor",
@@ -26,7 +36,7 @@ class ChunkProcessor(BaseNode):
             if self.splitter:
                 splitter_context = {"text": doc_content}
                 await self.splitter.exec(splitter_context)
-                chunks = splitter_context.get("chunks", [doc_content])
+                chunks = splitter_context.get("text_chunks", [doc_content])
             else:
                 chunks = [doc_content]
 

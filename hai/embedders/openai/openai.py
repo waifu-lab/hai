@@ -4,6 +4,13 @@ from hai.core import BaseNode
 
 
 class EmbeddingProcessor(BaseNode):
+    """Embed chunk contents in batches through *embedder* (a ProviderEmbedding).
+
+    Context:
+        reads: ``chunks`` (List[dict] from ChunkProcessor)
+        writes: ``embedded_chunks`` (the same chunk dicts, each with an ``embedding`` field added)
+    """
+
     def __init__(
         self,
         name: str = "EmbeddingProcessor",
@@ -40,6 +47,13 @@ class EmbeddingProcessor(BaseNode):
 
 
 class QueryEmbedder(BaseNode):
+    """Embed the search query through *embedder* (a ProviderEmbedding).
+
+    Context:
+        reads: ``query`` (str)
+        writes: ``query_embedding`` (List[float])
+    """
+
     def __init__(
         self,
         name: str = "QueryEmbedder",
@@ -52,10 +66,11 @@ class QueryEmbedder(BaseNode):
         query = context.get("query", "")
 
         if not query:
-            raise ValueError("context 中必須包含 'query'")
+            raise ValueError("'query' is required in context")
 
         embed_context = {"input": query}
         await self.embedder.exec(embed_context)
-        context["query_embedding"] = embed_context.get("embedding", [])
+        embeddings = embed_context.get("embeddings", [])
+        context["query_embedding"] = embeddings[0] if embeddings else []
 
         return context

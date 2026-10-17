@@ -1,4 +1,3 @@
-import asyncio
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -24,19 +23,19 @@ class JSONLoader(BaseLoader):
 
     ```python
     # Auto-detect: JSON array → one doc per item
-    loader = JSONLoader("json_loader", source="records.json")
+    loader = JSONLoader(source="records.json")
 
     # JSONL: one doc per line (auto-detected by .jsonl extension)
-    loader = JSONLoader("json_loader", source="data.jsonl")
+    loader = JSONLoader(source="data.jsonl")
 
     # Force JSONL mode on a .json file
-    loader = JSONLoader("json_loader", source="data.json", is_jsonl=True)
+    loader = JSONLoader(source="data.json", is_jsonl=True)
 
     # Use a specific field as the Document content
-    loader = JSONLoader("json_loader", source="data.jsonl", content_field="text")
+    loader = JSONLoader(source="data.jsonl", content_field="text")
 
     # Batch JSONL lines (5 lines per Document)
-    loader = JSONLoader("json_loader", source="data.jsonl", batch_size=5)
+    loader = JSONLoader(source="data.jsonl", batch_size=5)
 
     # Load all JSON files in a directory
     loader = JSONLoader("json_loader", source="./data", pattern="*.json", recursive=True)
@@ -45,7 +44,8 @@ class JSONLoader(BaseLoader):
 
     def __init__(
         self,
-        name: str,
+        name: str = "JSONLoader",
+        *,
         source: Union[str, Path],
         pattern: str = "*.json",
         encoding: Optional[str] = None,
@@ -53,6 +53,7 @@ class JSONLoader(BaseLoader):
         content_field: Optional[str] = None,
         batch_size: Optional[int] = None,
         is_jsonl: Optional[bool] = None,
+        strict: bool = False,
     ):
         """
         Args:
@@ -66,8 +67,9 @@ class JSONLoader(BaseLoader):
             batch_size: For JSONL only — group this many lines into one Document
                         instead of one Document per line. Content becomes a JSON array.
             is_jsonl: Force JSONL parsing mode. If None, auto-detect by .jsonl extension.
+            strict: Raise on the first file that fails to load instead of skipping it
         """  # noqa: E501
-        super().__init__(name)
+        super().__init__(name, strict=strict)
         self.source = Path(source)
         self.pattern = pattern
         self.encoding = encoding
@@ -232,14 +234,5 @@ class JSONLoader(BaseLoader):
         return await self._load_json(file_path)
 
     async def load(self) -> List[Document]:
-        import warnings
-
         files = self._gather_files(self.source, self.pattern, self.recursive)
-        results = await asyncio.gather(*[self._load_file(f) for f in files], return_exceptions=True)
-        documents = []
-        for file, result in zip(files, results):
-            if isinstance(result, Exception):
-                warnings.warn(f"Failed to load {file}: {result}", stacklevel=2)
-            else:
-                documents.extend(result)
-        return documents
+        return await self._load_each(files, self._load_file)

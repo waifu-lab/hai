@@ -5,6 +5,13 @@ from hai.vectorstores.qdrant.QdrantClient import QdrantStore
 
 
 class VectorStoreRetriever(BaseNode):
+    """Query *store* for the *top_k* nearest neighbours of the query embedding.
+
+    Context:
+        reads: ``query_embedding`` (List[float])
+        writes: ``retrieved_documents`` (List[dict]), ``retrieved_count`` (int)
+    """
+
     def __init__(
         self,
         name: str = "VectorStoreRetriever",
@@ -21,9 +28,9 @@ class VectorStoreRetriever(BaseNode):
         query_embedding = context.get("query_embedding", [])
 
         if not query_embedding:
-            raise ValueError("context 中必須包含 'query_embedding'")
+            raise ValueError("'query_embedding' is required in context")
 
-        results = self.store.query(
+        results = await self.store.query(
             query_embedding=query_embedding,
             top_k=self.top_k,
             score_threshold=self.score_threshold,

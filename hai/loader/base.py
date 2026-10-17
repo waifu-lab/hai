@@ -1,10 +1,16 @@
+import asyncio
+import logging
 from abc import abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, TypeVar, Union
 
 from hai.core import BaseNode, Document
 
+logger = logging.getLogger(__name__)
+
 _ENCODINGS = ["utf-8", "utf-8-sig", "latin-1", "cp1252", "gbk"]
+
+T = TypeVar("T")
 
 
 def detect_encoding(file_path: Path, forced: Optional[str] = None) -> str:
@@ -22,8 +28,20 @@ def detect_encoding(file_path: Path, forced: Optional[str] = None) -> str:
 
 
 class BaseLoader(BaseNode):
-    def __init__(self, name: str):
+    """Base class for loaders. Subclasses implement :meth:`load`.
+
+    A source that fails to load (unreadable file, bad JSON, HTTP error ...) is
+    logged and skipped, so one bad file does not abort a whole directory. Pass
+    ``strict=True`` to raise on the first failure instead. Failed sources never
+    produce empty Documents.
+
+    Context:
+        writes: ``documents`` (List[Document]), ``document_count`` (int)
+    """
+
+    def __init__(self, name: str, strict: bool = False):
         super().__init__(name)
+        self.strict = strict
         self.documents: List[Document] = []
 
     def _gather_files(self, source: Path, pattern: str, recursive: bool) -> List[Path]:
@@ -34,6 +52,23 @@ class BaseLoader(BaseNode):
             glob_fn = source.rglob if recursive else source.glob
             return [f for f in glob_fn(pattern) if f.is_file()]
         raise FileNotFoundError(f"Source not found: {source}")
+
+    async def _load_each(
+        self,
+        sources: Sequence[T],
+        load_one: Callable[[T], Awaitable[Union[Document, List[Document]]]],
+    ) -> List[Document]:
+        """Run *load_one* on every source concurrently and flatten the results, applying the error policy."""
+        results = await asyncio.gather(*(load_one(source) for source in sources), return_exceptions=True)
+        documents: List[Document] = []
+        for source, result in zip(sources, results):
+            if isinstance(result, BaseException):
+                if self.strict or not isinstance(result, Exception):
+                    raise result
+                logger.warning("%s: failed to load %s: %s", self.name, source, result)
+                continue
+            documents.extend(result if isinstance(result, list) else [result])
+        return documents
 
     @abstractmethod
     async def load(self) -> List[Document]:

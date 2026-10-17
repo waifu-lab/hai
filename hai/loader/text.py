@@ -1,4 +1,3 @@
-import asyncio
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -20,19 +19,21 @@ class TextLoader(BaseLoader):
     - Custom file extensions
 
     ```python
-    loader = TextLoader("text_loader", source="./docs/readme.txt")
-    loader = TextLoader("text_loader", source="./docs", pattern="*.txt")
-    loader = TextLoader("text_loader", source="./data", pattern="**/*.log", recursive=True)
+    loader = TextLoader(source="./docs/readme.txt")
+    loader = TextLoader(source="./docs", pattern="*.txt")
+    loader = TextLoader("log_loader", source="./data", pattern="**/*.log", recursive=True)
     ```
-    """  # noqa: E501
+    """
 
     def __init__(
         self,
-        name: str,
+        name: str = "TextLoader",
+        *,
         source: Union[str, Path],
         pattern: str = "*.txt",
         encoding: Optional[str] = None,
         recursive: bool = False,
+        strict: bool = False,
     ):
         """
         Args:
@@ -41,8 +42,9 @@ class TextLoader(BaseLoader):
             pattern: Glob pattern for matching files (default: *.txt)
             encoding: Force specific encoding (default: auto-detect)
             recursive: Search subdirectories (default: False)
+            strict: Raise on the first file that fails to load instead of skipping it
         """
-        super().__init__(name)
+        super().__init__(name, strict=strict)
         self.source = Path(source)
         self.pattern = pattern
         self.encoding = encoding
@@ -67,4 +69,4 @@ class TextLoader(BaseLoader):
     async def load(self) -> List[Document]:
         """Load text file(s) from source."""
         files = self._gather_files(self.source, self.pattern, self.recursive)
-        return list(await asyncio.gather(*[self._load_file(f) for f in files]))
+        return await self._load_each(files, self._load_file)

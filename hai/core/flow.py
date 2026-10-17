@@ -31,7 +31,11 @@ class Flow:
         return self
 
     def on_error(self, handler: Callable[[BaseNode, Exception], bool]) -> "Flow":
-        """Handle node errors. Return True to stop pipeline, False to continue."""
+        """Handle node errors.
+
+        Return True to re-raise and stop the pipeline, False to skip the failed
+        node and continue with its default next node.
+        """
         self._on_error = handler
         return self
 
@@ -44,12 +48,9 @@ class Flow:
                 logger.debug("node %s completed", node.name)
             except Exception as exc:
                 logger.error("node %s failed: %s", node.name, exc)
-                stop = True
-                if self._on_error:
-                    stop = self._on_error(node, exc)
-                if stop:
+                if self._on_error is None or self._on_error(node, exc):
                     raise
-                break
+                current = node.next(None)
         return context
 
     async def run(self, context: Dict[str, Any]) -> Dict[str, Any]:

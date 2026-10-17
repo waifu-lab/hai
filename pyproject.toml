@@ -8,6 +8,8 @@ lint.unfixable = ["F401"]
 
 line-length = 120
 
+target-version = "py39"
+
 [project]
 name = "hydrogen-ai"
 version = "0.1.3"

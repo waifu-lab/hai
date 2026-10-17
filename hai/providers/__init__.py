@@ -17,6 +17,7 @@ from hai.providers.providers import (
     ProviderSTT,
     ProviderText,
     ProviderTTS,
+    StreamInterruptedError,
     TurnResult,
 )
 
@@ -55,14 +56,16 @@ def create_text_provider(
     model: str,
     api_key: Optional[str] = None,
     *,
-    temperature: float = 0.7,
-    max_tokens: Optional[int] = 1500,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
     stream: bool = False,
     reasoning_effort: Optional[Literal["low", "medium", "high"]] = None,
     extra_params: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ) -> ProviderText:
     """Create a text provider with a unified interface.
+
+    `temperature` and `max_tokens` fall back to each provider's own defaults when None.
 
     `reasoning_effort` is normalized across providers:
     - OpenAI: forwarded as `reasoning_effort`
@@ -76,13 +79,11 @@ def create_text_provider(
     if cls is None:
         raise ValueError(f"Provider '{provider}' has no text implementation.")
 
-    init_kwargs: Dict[str, Any] = {
-        "model": model,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "stream": stream,
-        **kwargs,
-    }
+    init_kwargs: Dict[str, Any] = {"model": model, "stream": stream, **kwargs}
+    if temperature is not None:
+        init_kwargs["temperature"] = temperature
+    if max_tokens is not None:
+        init_kwargs["max_tokens"] = max_tokens
     if api_key is not None:
         init_kwargs["api_key"] = api_key
     if provider in ("openai", "anthropic"):
@@ -102,6 +103,7 @@ __all__ = [
     "ProviderTTS",
     "ProviderEmbedding",
     "TurnResult",
+    "StreamInterruptedError",
     "OpenAI",
     "OpenAIText",
     "OpenAIEmbedding",

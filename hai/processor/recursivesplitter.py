@@ -5,6 +5,13 @@ from hai.core import BaseNode
 
 
 class RecursiveSplitter(BaseNode):
+    """Split text by trying *separators* in order, recursing into pieces still over *chunk_size*.
+
+    Context:
+        reads: ``text`` (str)
+        writes: ``text_chunks`` (List[str]), ``chunk_count`` (int)
+    """
+
     def __init__(
         self,
         name: str = "RecursiveSplitter",
@@ -38,11 +45,11 @@ class RecursiveSplitter(BaseNode):
         text = context.get("text", "")
 
         if not text:
-            context["chunks"] = []
+            context["text_chunks"] = []
             return context
 
         chunks = self._split_text(text, self.separators)
-        context["chunks"] = chunks
+        context["text_chunks"] = chunks
         context["chunk_count"] = len(chunks)
 
         return context

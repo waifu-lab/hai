@@ -1,7 +1,11 @@
 import asyncio
+import email.utils
 import inspect
+import json
 import logging
+import time
 import warnings
+from abc import abstractmethod
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Union
 
 import httpx
@@ -9,61 +13,57 @@ from httpx import AsyncClient
 from pydantic import BaseModel
 
 from hai.core import BaseNode
-from hai.tool import Tool
+from hai.tool import Tool, run_tool_calls
 
 logger = logging.getLogger(__name__)
-# curl https://api.openai.com/v1/chat/completions \
-#   -H "Content-Type: application/json" \
-#   -H "Authorization: Bearer $OPENAI_API_KEY" \
-#   -d '{
-#     "model": "gpt-5",
-#     "messages": [
-#       {
-#         "role": "developer",
-#         "content": "You are a helpful assistant."
-#       },
-#       {
-#         "role": "user",
-#         "content": "Hello!"
-#       }
-#     ]
-#   }'
 
-# {
-#   "id": "chatcmpl-B9MBs8CjcvOU2jLn4n570S5qMJKcT",
-#   "object": "chat.completion",
-#   "created": 1741569952,
-#   "model": "gpt-4.1-2025-04-14",
-#   "choices": [
-#     {
-#       "index": 0,
-#       "message": {
-#         "role": "assistant",
-#         "content": "Hello! How can I assist you today?",
-#         "refusal": null,
-#         "annotations": []
-#       },
-#       "logprobs": null,
-#       "finish_reason": "stop"
-#     }
-#   ],
-#   "usage": {
-#     "prompt_tokens": 19,
-#     "completion_tokens": 10,
-#     "total_tokens": 29,
-#     "prompt_tokens_details": {
-#       "cached_tokens": 0,
-#       "audio_tokens": 0
-#     },
-#     "completion_tokens_details": {
-#       "reasoning_tokens": 0,
-#       "audio_tokens": 0,
-#       "accepted_prediction_tokens": 0,
-#       "rejected_prediction_tokens": 0
-#     }
-#   },
-#   "service_tier": "default"
-# }
+
+def _parse_retry_after(value: Optional[str]) -> Optional[float]:
+    """Seconds to wait from a ``Retry-After`` header (delta-seconds or HTTP date)."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        retry_at = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, retry_at.timestamp() - time.time())
+
+
+# RemoteProtocolError: the server closed the connection mid-response (common while streaming)
+_TRANSPORT_ERRORS = (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError, httpx.HTTPStatusError)
+
+
+class StreamInterruptedError(Exception):
+    """A streaming turn failed after some content had already been passed to ``on_chunk``.
+
+    Not retried here: a retry would re-send text the caller has already shown.
+    ``partial_content`` is what was streamed before the failure; the caller decides
+    whether to discard it and run the turn again.
+    """
+
+    def __init__(self, partial_content: str, cause: Exception) -> None:
+        super().__init__(f"Stream interrupted after {len(partial_content)} chars: {cause}")
+        self.partial_content = partial_content
+        self.cause = cause
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Network errors, timeouts, 429 and 5xx are retried; other HTTP errors are not."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    return isinstance(exc, (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError))
+
+
+def _retry_delay(attempt: int, exc: Exception) -> float:
+    """Exponential backoff. 429 honours ``Retry-After`` and otherwise backs off harder."""
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+        retry_after = _parse_retry_after(exc.response.headers.get("retry-after"))
+        return retry_after if retry_after is not None else float(5 * 2**attempt)
+    return float(2**attempt)
 
 
 class TurnResult(BaseModel):
@@ -75,16 +75,21 @@ class TurnResult(BaseModel):
     usage: Dict[str, int]
 
 
-class ProviderInfo(BaseNode):
+class ProviderInfo:
+    """Provider-level operations such as listing models. Not a pipeline node."""
+
     def __init__(
         self,
         name: str,
         api_key: str,
         base_url: str,
     ):
-        super().__init__(name)
+        self.name = name
         self.api_key = api_key
         self.base_url = base_url
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(name='{self.name}')"
 
     async def models(self) -> List[str]:
         async with AsyncClient() as client:
@@ -99,12 +104,21 @@ class ProviderInfo(BaseNode):
 
 
 class ProviderText(BaseNode):
+    """Chat completion node for any OpenAI-compatible ``/chat/completions`` endpoint.
+
+    As a node it runs the full tool loop: tool calls are executed and fed back
+    until the model returns a final answer. Use :meth:`call_once` to drive the
+    loop yourself.
+
+    Context:
+        reads: ``messages`` (List[dict]), ``tools`` (List[Tool], optional)
+        writes: ``messages`` (conversation including tool-call turns),
+            ``assistant_message`` (str), ``openai_response`` (raw response, non-stream),
+            ``parsed_response`` / ``parse_error`` (when ``response_format`` is ``json_object``)
     """
-    OpenAI
-    Anthropic
-    Google
-    ...
-    """
+
+    _max_tokens_field = "max_tokens"
+    """Request field that carries ``max_tokens``; subclasses override it when the API names it differently."""
 
     def __init__(
         self,
@@ -112,7 +126,7 @@ class ProviderText(BaseNode):
         api_key: str,
         base_url: str,
         model: str,
-        temperature: float,
+        temperature: Optional[float],
         max_tokens: Optional[int] = None,
         stream: bool = False,
         response_format: Optional[Dict[str, Any]] = None,
@@ -139,35 +153,39 @@ class ProviderText(BaseNode):
         tools: List[Tool] = context.get("tools", [])
 
         if not messages:
-            raise ValueError("context 中必須包含 'messages'")
+            raise ValueError("'messages' is required in context")
 
-        payload: Dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": self.temperature,
-            "stream": self.stream,
-        }
+        payload = {**self._build_payload(messages, tools), "stream": self.stream}
 
-        if self.max_tokens:
-            payload["max_tokens"] = self.max_tokens
+        async with AsyncClient(timeout=self.timeout) as client:
+            if self.stream:
+                return await self._stream_request(client, self._headers(), payload, context, tools)
+            else:
+                return await self._request(client, self._headers(), payload, context, tools)
 
-        if self.response_format:
-            payload["response_format"] = self.response_format
-
-        if tools:
-            payload["tools"] = [t.to_dict() for t in tools]
-            payload["tool_choice"] = "auto"
-
-        headers = {
+    def _headers(self) -> Dict[str, str]:
+        return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
-        async with AsyncClient(timeout=self.timeout) as client:
-            if self.stream:
-                return await self._stream_request(client, headers, payload, context, tools)
-            else:
-                return await self._request(client, headers, payload, context, tools)
+    def _build_payload(self, messages: List[Dict[str, Any]], tools: Optional[List[Tool]]) -> Dict[str, Any]:
+        """Request body shared by :meth:`exec` and :meth:`call_once`, without ``stream``.
+
+        ``temperature`` is omitted when None so the provider default applies.
+        """
+        payload: Dict[str, Any] = {"model": self.model, "messages": messages}
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+        if self.max_tokens:
+            payload[self._max_tokens_field] = self.max_tokens
+        if self.response_format:
+            payload["response_format"] = self.response_format
+        if tools:
+            payload["tools"] = [t.to_dict() for t in tools]
+            payload["tool_choice"] = "auto"
+        payload.update(self._extra_payload())
+        return payload
 
     async def _post_with_retry(
         self,
@@ -175,32 +193,18 @@ class ProviderText(BaseNode):
         headers: Dict[str, str],
         payload: Dict[str, Any],
     ) -> Any:
-        """POST with exponential backoff retry on network errors and 5xx responses."""
-        last_exc: Optional[Exception] = None
-        for attempt in range(self.max_retries):
+        """POST with exponential backoff on network errors, 429 and 5xx responses."""
+        attempts = max(1, self.max_retries)
+        for attempt in range(attempts):
             try:
                 response = await client.post(self.base_url, headers=headers, json=payload)
-                if response.status_code >= 500:
-                    raise httpx.HTTPStatusError(
-                        f"Server error {response.status_code}",
-                        request=response.request,
-                        response=response,
-                    )
                 response.raise_for_status()
                 return response.json()
-            except (httpx.NetworkError, httpx.TimeoutException) as e:
-                last_exc = e
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code >= 500:
-                    last_exc = e
-                elif e.response.status_code == 429:
-                    last_exc = e  # TODO:
+            except _TRANSPORT_ERRORS as e:
+                if not _is_retryable(e) or attempt == attempts - 1:
                     raise
-                else:
-                    raise
-            if attempt < self.max_retries - 1:
-                await asyncio.sleep(2**attempt)
-        raise last_exc
+                await asyncio.sleep(_retry_delay(attempt, e))
+        raise AssertionError("unreachable")
 
     async def _request(
         self,
@@ -210,9 +214,6 @@ class ProviderText(BaseNode):
         context: Dict[str, Any],
         tools: Optional[List[Tool]] = None,
     ) -> str:
-        import json
-
-        tool_map = {t.name: t for t in (tools or [])}
         messages: List[Dict[str, Any]] = list(payload["messages"])
 
         while True:
@@ -226,26 +227,9 @@ class ProviderText(BaseNode):
             message = choice["message"]
             finish_reason = choice.get("finish_reason")
 
-            if finish_reason == "tool_calls" and tool_map:
+            if finish_reason == "tool_calls" and tools:
                 messages.append(message)
-
-                for tool_call in message.get("tool_calls", []):
-                    func_name = tool_call["function"]["name"]
-                    func_args = tool_call["function"]["arguments"]
-                    tool_id = tool_call["id"]
-
-                    if func_name in tool_map:
-                        result = await tool_map[func_name].call(func_args)
-                    else:
-                        result = f"Tool '{func_name}' not found"
-
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_id,
-                            "content": result,
-                        }
-                    )
+                messages.extend(await run_tool_calls(message.get("tool_calls", []), tools))
             else:
                 content = message.get("content", "")
                 context["openai_response"] = data
@@ -269,17 +253,18 @@ class ProviderText(BaseNode):
         payload: Dict[str, Any],
         on_chunk: Optional[Any] = None,
     ):
-        """Stream one LLM turn with retry on network errors and 5xx.
+        """Stream one LLM turn with retry on network errors, 429 and 5xx.
+
+        Retries only while nothing has been passed to ``on_chunk``; a failure after that
+        raises :class:`StreamInterruptedError` instead.
 
         Returns (full_content, tool_calls_buffer, finish_reason, usage).
         usage dict has keys "input", "output", "total"; zeros if not provided by API.
         """
-        import json
-
         merged_payload = {**payload, "stream_options": {"include_usage": True}}
 
-        last_exc: Optional[Exception] = None
-        for attempt in range(self.max_retries):
+        attempts = max(1, self.max_retries)
+        for attempt in range(attempts):
             full_content = ""
             tool_calls_buffer: Dict[int, Dict[str, str]] = {}
             finish_reason = None
@@ -288,11 +273,7 @@ class ProviderText(BaseNode):
             try:
                 async with client.stream("POST", self.base_url, headers=headers, json=merged_payload) as response:
                     if response.status_code >= 500:
-                        raise httpx.HTTPStatusError(
-                            f"Server error {response.status_code}",
-                            request=response.request,
-                            response=response,
-                        )
+                        response.raise_for_status()
                     if response.status_code >= 400:
                         body = await response.aread()
                         # TODO: Replace with a custom error
@@ -360,24 +341,14 @@ class ProviderText(BaseNode):
 
                 return full_content, tool_calls_buffer, finish_reason, usage
 
-            except (httpx.NetworkError, httpx.TimeoutException) as e:
-                last_exc = e
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 429 or e.response.status_code >= 500:
-                    if e.response.status_code == 429:
-                        pass  # TODO:
-                    last_exc = e
-                else:
+            except _TRANSPORT_ERRORS as e:
+                if full_content and on_chunk is not None:
+                    raise StreamInterruptedError(full_content, e) from e
+                if not _is_retryable(e) or attempt == attempts - 1:
                     raise
+                await asyncio.sleep(_retry_delay(attempt, e))
 
-            if attempt < self.max_retries - 1:
-                delay = 2**attempt
-                if isinstance(last_exc, httpx.HTTPStatusError) and last_exc.response.status_code == 429:
-                    retry_after = last_exc.response.headers.get("retry-after")
-                    delay = float(retry_after) if retry_after else float(5 * (2**attempt))
-                await asyncio.sleep(delay)
-
-        raise last_exc
+        raise AssertionError("unreachable")
 
     async def _stream_request(
         self,
@@ -387,7 +358,6 @@ class ProviderText(BaseNode):
         context: Dict[str, Any],
         tools: Optional[List[Tool]] = None,
     ) -> str:
-        tool_map = {t.name: t for t in (tools or [])}
         messages: List[Dict[str, Any]] = list(payload["messages"])
 
         while True:
@@ -399,7 +369,7 @@ class ProviderText(BaseNode):
             if full_content:
                 ...
 
-            if finish_reason == "tool_calls" and tool_map and tool_calls_buffer:
+            if finish_reason == "tool_calls" and tools and tool_calls_buffer:
                 tool_calls_list = [
                     {
                         "id": tool_calls_buffer[i]["id"],
@@ -418,24 +388,7 @@ class ProviderText(BaseNode):
                         "tool_calls": tool_calls_list,
                     }
                 )
-
-                for tool_call in tool_calls_list:
-                    func_name = tool_call["function"]["name"]
-                    func_args = tool_call["function"]["arguments"]
-                    tool_id = tool_call["id"]
-
-                    if func_name in tool_map:
-                        result = await tool_map[func_name].call(func_args)
-                    else:
-                        result = f"Tool '{func_name}' not found"
-
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_id,
-                            "content": result,
-                        }
-                    )
+                messages.extend(await run_tool_calls(tool_calls_list, tools))
             else:
                 context["assistant_message"] = full_content
                 context["messages"] = messages
@@ -453,30 +406,15 @@ class ProviderText(BaseNode):
         Prepends system_prompt as a system message if provided.
         Returns TurnResult with tool_calls in normalized OpenAI format.
         The Agent drives the tool loop; this method only covers one turn.
+        Use :func:`hai.tool.run_tool_calls` to execute the returned tool calls.
         """
         full_messages: List[Dict[str, Any]] = []
         if system_prompt:
             full_messages.append({"role": "system", "content": system_prompt})
         full_messages.extend(messages)
 
-        payload: Dict[str, Any] = {
-            "model": self.model,
-            "messages": full_messages,
-            "temperature": self.temperature,
-        }
-        if self.max_tokens:
-            payload["max_tokens"] = self.max_tokens
-        if self.response_format:
-            payload["response_format"] = self.response_format
-        if tools:
-            payload["tools"] = [t.to_dict() for t in tools]
-            payload["tool_choice"] = "auto"
-        payload.update(self._extra_payload())
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        payload = self._build_payload(full_messages, tools)
+        headers = self._headers()
 
         async with AsyncClient(timeout=self.timeout) as client:
             if self.stream:
@@ -521,6 +459,13 @@ class ProviderText(BaseNode):
 
 
 class ProviderSTT(BaseNode):
+    """Speech-to-text node for OpenAI-compatible ``/audio/transcriptions`` endpoints.
+
+    Context:
+        reads: ``audio`` (bytes), ``format`` (str, default ``"webm"``), ``language`` (str, optional)
+        writes: ``transcript`` (str)
+    """
+
     def __init__(
         self,
         name: str,
@@ -543,9 +488,9 @@ class ProviderSTT(BaseNode):
         audio: bytes = context["audio"]
         fmt: str = context.get("format", "webm")
         language: Optional[str] = context.get("language", self.language)
-        text = await self.transcribe(audio, fmt, language)
-        context["text"] = text
-        return text
+        transcript = await self.transcribe(audio, fmt, language)
+        context["transcript"] = transcript
+        return transcript
 
     async def transcribe(
         self,
@@ -576,72 +521,44 @@ class ProviderSTT(BaseNode):
 
 
 class ProviderTTS(BaseNode):
-    def __init__(
-        self,
-        name: str,
-        api_key: str,
-        base_url: str,
-        model: str = "tts-1",
-        voice: str = "nova",
-        response_format: str = "mp3",
-        speed: float = 1.0,
-        timeout: float = 60.0,
-    ) -> None:
+    """Base class for text-to-speech nodes.
+
+    Subclasses implement :meth:`synthesize` and :meth:`synthesize_stream` with their
+    own provider-specific options; the node behaviour is shared.
+
+    Context:
+        reads: ``speech_text`` (str)
+        writes: ``speech_audio`` (bytes)
+    """
+
+    def __init__(self, name: str, base_url: str, timeout: float = 60.0) -> None:
         super().__init__(name)
-        self.api_key = api_key
         self.base_url = base_url
-        self.model = model
-        self.voice = voice
-        self.response_format = response_format
-        self.speed = speed
         self.timeout = timeout
 
     async def exec(self, context: Dict[str, Any]) -> Any:
-        text: str = context["text"]
-        audio = await self.synthesize(text)
-        context["audio"] = audio
+        audio = await self.synthesize(context["speech_text"])
+        context["speech_audio"] = audio
         return audio
 
+    @abstractmethod
     async def synthesize(self, text: str) -> bytes:
-        """Convert text to audio bytes (default is mp3)."""
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload: Dict[str, Any] = {
-            "model": self.model,
-            "input": text,
-            "voice": self.voice,
-            "response_format": self.response_format,
-            "speed": self.speed,
-        }
-        async with AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(self.base_url, headers=headers, json=payload)
-            response.raise_for_status()
-            return response.content
+        """Convert text to complete audio bytes."""
 
-    async def synthesize_stream(self, text: str, chunk_size: int = 4096) -> "AsyncIterator[bytes]":
-        """Stream audio synthesis."""
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload: Dict[str, Any] = {
-            "model": self.model,
-            "input": text,
-            "voice": self.voice,
-            "response_format": self.response_format,
-            "speed": self.speed,
-        }
-        async with AsyncClient(timeout=self.timeout) as client:
-            async with client.stream("POST", self.base_url, headers=headers, json=payload) as response:
-                response.raise_for_status()
-                async for chunk in response.aiter_bytes(chunk_size):
-                    if chunk:
-                        yield chunk
+    @abstractmethod
+    def synthesize_stream(self, text: str, chunk_size: int = 4096) -> AsyncIterator[bytes]:
+        """Yield audio bytes in chunks as they are produced."""
 
 
 class ProviderEmbedding(BaseNode):
+    """Embedding node for OpenAI-compatible ``/embeddings`` endpoints.
+
+    Context:
+        reads: ``input`` (str or List[str])
+        writes: ``embeddings`` (List[List[float]], one per input; a single str gives a
+            one-element list), ``response`` (raw API response)
+    """
+
     def __init__(
         self,
         name: str,
@@ -676,12 +593,7 @@ class ProviderEmbedding(BaseNode):
 
             data = response.json()
 
-            if isinstance(input_text, list):
-                embeddings = [item["embedding"] for item in data["data"]]
-                context["embeddings"] = embeddings
-                return embeddings
-            else:
-                embedding = data["data"][0]["embedding"]
-                context["embedding"] = embedding
-                context["response"] = data
-                return embedding
+        embeddings = [item["embedding"] for item in sorted(data["data"], key=lambda item: item.get("index", 0))]
+        context["embeddings"] = embeddings
+        context["response"] = data
+        return embeddings

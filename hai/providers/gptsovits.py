@@ -60,7 +60,10 @@ class GPTSoVITS(ProviderInfo):
 
 
 class GPTSoVITSTTS(ProviderTTS):
-    """Text-to-speech via a local GPT-SoVITS WebAPI server."""
+    """Text-to-speech via a local GPT-SoVITS WebAPI server.
+
+    Requests go to ``{base_url}/tts`` and return WAV audio.
+    """
 
     def __init__(
         self,
@@ -105,26 +108,22 @@ class GPTSoVITSTTS(ProviderTTS):
             temperature: Sampling temperature for the T2S model.
             timeout: HTTP request timeout in seconds.
         """
-        super().__init__(
-            name=name,
-            api_key="",
-            base_url=f"{base_url}/tts",
-            model="",
-            voice="",
-            response_format="wav",
-            speed=speed_factor,
-            timeout=timeout,
-        )
+        super().__init__(name=name, base_url=base_url, timeout=timeout)
         self.ref_audio_path = ref_audio_path
         self.prompt_text = prompt_text
         self.prompt_lang = prompt_lang
         self.text_lang = text_lang
         self.text_split_method = text_split_method
         self.batch_size = batch_size
+        self.speed_factor = speed_factor
         self.streaming_mode = streaming_mode
         self.top_k = top_k
         self.top_p = top_p
-        self.tts_temperature = temperature
+        self.temperature = temperature
+
+    @property
+    def tts_url(self) -> str:
+        return f"{self.base_url.rstrip('/')}/tts"
 
     def _build_payload(self, text: str, streaming: Union[bool, int] = False) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -134,10 +133,10 @@ class GPTSoVITSTTS(ProviderTTS):
             "prompt_lang": self.prompt_lang,
             "top_k": self.top_k,
             "top_p": self.top_p,
-            "temperature": self.tts_temperature,
+            "temperature": self.temperature,
             "text_split_method": self.text_split_method,
             "batch_size": self.batch_size,
-            "speed_factor": self.speed,
+            "speed_factor": self.speed_factor,
             "streaming_mode": streaming,
         }
         if self.prompt_text:
@@ -155,7 +154,7 @@ class GPTSoVITSTTS(ProviderTTS):
         """
         payload = self._build_payload(text, streaming=False)
         async with AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(self.base_url, json=payload)
+            response = await client.post(self.tts_url, json=payload)
             response.raise_for_status()
             return response.content
 
@@ -174,7 +173,7 @@ class GPTSoVITSTTS(ProviderTTS):
         streaming = self.streaming_mode if self.streaming_mode else 1
         payload = self._build_payload(text, streaming=streaming)
         async with AsyncClient(timeout=self.timeout) as client:
-            async with client.stream("POST", self.base_url, json=payload) as response:
+            async with client.stream("POST", self.tts_url, json=payload) as response:
                 response.raise_for_status()
                 async for chunk in response.aiter_bytes(chunk_size):
                     if chunk:

@@ -4,6 +4,13 @@ from hai.core import BaseNode
 
 
 class Splitter(BaseNode):
+    """Split text on a single separator and merge pieces up to *chunk_size* characters.
+
+    Context:
+        reads: ``text`` (str)
+        writes: ``text_chunks`` (List[str]), ``chunk_count`` (int)
+    """
+
     def __init__(
         self,
         name: str = "Splitter",
@@ -26,11 +33,11 @@ class Splitter(BaseNode):
         text = context.get("text", "")
 
         if not text:
-            context["chunks"] = []
+            context["text_chunks"] = []
             return context
 
         chunks = self._split_text(text)
-        context["chunks"] = chunks
+        context["text_chunks"] = chunks
         context["chunk_count"] = len(chunks)
 
         return context
@@ -46,8 +53,14 @@ class Splitter(BaseNode):
         return self._merge_splits(splits)
 
     def _merge_splits(self, splits: List[str]) -> List[str]:
+        """Greedily pack splits into chunks of at most *chunk_size* characters.
+
+        When a chunk is emitted, its trailing splits (at most *chunk_overlap*
+        characters in total) are carried over to start the next chunk. A single
+        split longer than *chunk_size* becomes its own oversized chunk.
+        """
         chunks = []
-        current_chunk = []
+        current_chunk: List[str] = []
         current_length = 0
 
         for split in splits:
@@ -56,9 +69,10 @@ class Splitter(BaseNode):
             if current_length + split_length > self.chunk_size and current_chunk:
                 chunks.append("".join(current_chunk))
 
-                overlap_start = max(0, len(current_chunk) - 1)
-                current_chunk = current_chunk[overlap_start:]
-                current_length = sum(len(s) for s in current_chunk)
+                while current_chunk and (
+                    current_length > self.chunk_overlap or current_length + split_length > self.chunk_size
+                ):
+                    current_length -= len(current_chunk.pop(0))
 
             current_chunk.append(split)
             current_length += split_length

@@ -1,4 +1,3 @@
-import asyncio
 import csv
 import io
 import json
@@ -22,13 +21,13 @@ class CSVLoader(BaseLoader):
 
     ```python
     # One document per row
-    loader = CSVLoader("csv_loader", source="data.csv")
+    loader = CSVLoader(source="data.csv")
 
     # Tab-separated, one document per row
-    loader = CSVLoader("csv_loader", source="data.tsv", delimiter="\\t")
+    loader = CSVLoader(source="data.tsv", delimiter="\\t")
 
     # Batch rows (10 rows per document)
-    loader = CSVLoader("csv_loader", source="data.csv", batch_size=10)
+    loader = CSVLoader(source="data.csv", batch_size=10)
 
     # Load all CSVs in a directory
     loader = CSVLoader("csv_loader", source="./data", pattern="*.csv", recursive=True)
@@ -37,13 +36,15 @@ class CSVLoader(BaseLoader):
 
     def __init__(
         self,
-        name: str,
+        name: str = "CSVLoader",
+        *,
         source: Union[str, Path],
         pattern: str = "*.csv",
         delimiter: str = ",",
         encoding: Optional[str] = None,
         recursive: bool = False,
         batch_size: Optional[int] = None,
+        strict: bool = False,
     ):
         """
         Args:
@@ -55,8 +56,9 @@ class CSVLoader(BaseLoader):
             recursive: Search subdirectories (default: False)
             batch_size: If set, group this many rows into one Document instead
                         of one Document per row. Content becomes a JSON array.
+            strict: Raise on the first file that fails to load instead of skipping it
         """
-        super().__init__(name)
+        super().__init__(name, strict=strict)
         self.source = Path(source)
         self.pattern = pattern
         self.delimiter = delimiter
@@ -177,14 +179,5 @@ class CSVLoader(BaseLoader):
         return documents
 
     async def load(self) -> List[Document]:
-        import warnings
-
         files = self._gather_files(self.source, self.pattern, self.recursive)
-        results = await asyncio.gather(*[self._load_file(f) for f in files], return_exceptions=True)
-        documents = []
-        for file, result in zip(files, results):
-            if isinstance(result, Exception):
-                warnings.warn(f"Failed to load {file}: {result}", stacklevel=2)
-            else:
-                documents.extend(result)
-        return documents
+        return await self._load_each(files, self._load_file)

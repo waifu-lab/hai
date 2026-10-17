@@ -19,10 +19,10 @@ class MarkdownLoader(TextLoader):
     Examples:
     ```python
     # Keep markdown formatting
-    loader = MarkdownLoader("md_loader", source="./README.md")
+    loader = MarkdownLoader(source="./README.md")
 
     # Extract plain text only
-    loader = MarkdownLoader("md_loader", source="./docs", extract_text=True)
+    loader = MarkdownLoader(source="./docs", extract_text=True)
 
     # Extract metadata
     loader = MarkdownLoader(
@@ -71,11 +71,13 @@ class MarkdownLoader(TextLoader):
 
     def __init__(
         self,
-        name: str,
+        name: str = "MarkdownLoader",
+        *,
         source: Union[str, Path],
         pattern: str = "*.md",
         encoding: Optional[str] = None,
         recursive: bool = False,
+        strict: bool = False,
         extract_text: bool = False,
         extract_frontmatter: bool = True,
         extract_metadata: bool = False,
@@ -88,6 +90,7 @@ class MarkdownLoader(TextLoader):
             pattern: Glob pattern (*.md)
             encoding: Force specific encoding
             recursive: Search subdirectories
+            strict: Raise on the first file that fails to load instead of skipping it
             extract_text: Convert markdown to plain text
             extract_frontmatter: Parse YAML/TOML frontmatter
             extract_metadata: Extract structured metadata like headers, links
@@ -99,6 +102,7 @@ class MarkdownLoader(TextLoader):
             pattern=pattern,
             encoding=encoding,
             recursive=recursive,
+            strict=strict,
         )
         self.extract_text = extract_text
         self.extract_frontmatter = extract_frontmatter

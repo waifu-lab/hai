@@ -5,10 +5,17 @@ from hai.core import BaseNode
 from ftfy import fix_text
 
 DOUBLE_QUOTE = re.compile(f"[{re.escape(r'«‹»›„‟❝❞❮❯〝〞〟＂')}]")
-SINGLE_QUOTE = re.compile(f"[{re.escape(r"'‛'❛❜`´''")}]")
+SINGLE_QUOTE = re.compile(f"[{re.escape(r'‛❛❜`´')}']")
 
 
 class Cleaner(BaseNode):
+    """Fix mojibake and broken Unicode, optionally normalising quote characters.
+
+    Context:
+        reads: ``text`` (str)
+        writes: ``text`` (cleaned in place)
+    """
+
     def __init__(self, name: str = "Cleaner", fix_quotes: bool = True):
         super().__init__(name)
         self.fix_quotes = fix_quotes

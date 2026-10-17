@@ -1,11 +1,29 @@
+import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import Distance, PointIdsList, PointStruct, VectorParams
+
+logger = logging.getLogger(__name__)
+
+_DISTANCES = {
+    "cosine": Distance.COSINE,
+    "euclid": Distance.EUCLID,
+    "euclidean": Distance.EUCLID,
+    "dot": Distance.DOT,
+}
 
 
 class QdrantStore:
+    """Async Qdrant collection wrapper used by QdrantStoreWriter and VectorStoreRetriever.
+
+    The collection is created on the first :meth:`write` or :meth:`query`. Its vector
+    size is *embedding_dim* when given, otherwise the length of the first vector seen,
+    so it always matches the embedding model in use. Vectors whose length differs from
+    the collection's raise ``ValueError`` instead of failing inside Qdrant.
+    """
+
     def __init__(
         self,
         location: Optional[str] = None,
@@ -21,11 +39,11 @@ class QdrantStore:
         path: Optional[str] = None,
         force_disable_check_same_thread: bool = False,
         collection_name: str = "Document",
-        embedding_dim: int = 768,
+        embedding_dim: Optional[int] = None,
         content_field: str = "content",
         name_field: str = "name",
         embedding_field: str = "embedding",
-        similarity: str = "cosine",
+        similarity: Literal["cosine", "euclid", "euclidean", "dot"] = "cosine",
         shard_number: Optional[int] = None,
         replication_factor: Optional[int] = None,
         write_consistency_factor: Optional[int] = None,
@@ -36,7 +54,15 @@ class QdrantStore:
         quantization_config: Optional[dict] = None,
         init_from: Optional[dict] = None,
     ):
-        self._client = None
+        """
+        Args:
+            embedding_dim: Vector size of a new collection. None infers it from the first vector.
+            similarity: Distance metric: ``"cosine"``, ``"euclid"`` (alias ``"euclidean"``) or ``"dot"``.
+        """
+        if similarity.lower() not in _DISTANCES:
+            raise ValueError(f"Unknown similarity '{similarity}'. Choose from {sorted(_DISTANCES)}.")
+        self._client: Optional[AsyncQdrantClient] = None
+        self._collection_dim: Optional[int] = None
         self.location = location
         self.url = url
         self.port = port
@@ -65,9 +91,9 @@ class QdrantStore:
         self.quantization_config = quantization_config
         self.init_from = init_from
 
-    def _get_client(self) -> QdrantClient:
+    def _get_client(self) -> AsyncQdrantClient:
         if self._client is None:
-            self._client = QdrantClient(
+            self._client = AsyncQdrantClient(
                 location=self.location,
                 url=self.url,
                 port=self.port,
@@ -81,59 +107,54 @@ class QdrantStore:
                 path=self.path,
                 force_disable_check_same_thread=self.force_disable_check_same_thread,
             )
-
-            self._init_collection()
         return self._client
 
-    def _init_collection(self):
-        client = self._client
-
-        collections = client.get_collections().collections
-        collection_names = [col.name for col in collections]
-
-        if self.collection_name not in collection_names:
-            distance_map = {
-                "cosine": Distance.COSINE,
-                "euclid": Distance.EUCLID,
-                "dot": Distance.DOT,
-                "euclidean": Distance.EUCLID,
-            }
-            distance = distance_map.get(self.similarity.lower(), Distance.COSINE)
-
-            create_params = {
-                "collection_name": self.collection_name,
-                "vectors_config": VectorParams(
-                    size=self.embedding_dim,
-                    distance=distance,
-                ),
-            }
-
-            if self.shard_number is not None:
-                create_params["shard_number"] = self.shard_number
-            if self.replication_factor is not None:
-                create_params["replication_factor"] = self.replication_factor
-            if self.write_consistency_factor is not None:
-                create_params["write_consistency_factor"] = self.write_consistency_factor
-            if self.on_disk_payload is not None:
-                create_params["on_disk_payload"] = self.on_disk_payload
-            if self.hnsw_config is not None:
-                create_params["hnsw_config"] = self.hnsw_config
-            if self.optimizers_config is not None:
-                create_params["optimizers_config"] = self.optimizers_config
-            if self.wal_config is not None:
-                create_params["wal_config"] = self.wal_config
-            if self.quantization_config is not None:
-                create_params["quantization_config"] = self.quantization_config
-            if self.init_from is not None:
-                create_params["init_from"] = self.init_from
-
-            client.create_collection(**create_params)
-
-        else:
-            print(f"Collection '{self.collection_name}' already exists.")
-
-    def write(self, data: List[Dict[str, Any]]) -> List[str]:
+    async def _ensure_collection(self, vector_dim: int) -> AsyncQdrantClient:
+        """Create the collection if missing and check that *vector_dim* matches it."""
         client = self._get_client()
+        if self._collection_dim is None:
+            if await client.collection_exists(self.collection_name):
+                info = await client.get_collection(self.collection_name)
+                vectors = info.config.params.vectors
+                self._collection_dim = vectors.size if isinstance(vectors, VectorParams) else None
+                logger.debug("collection '%s' already exists", self.collection_name)
+            else:
+                self._collection_dim = self.embedding_dim or vector_dim
+                await self._create_collection(self._collection_dim)
+
+        if self._collection_dim is not None and vector_dim != self._collection_dim:
+            raise ValueError(
+                f"Vector size {vector_dim} does not match collection '{self.collection_name}' "
+                f"(size {self._collection_dim}). Use the same embedding model, or another collection_name."
+            )
+        return client
+
+    async def _create_collection(self, dim: int) -> None:
+        create_params: Dict[str, Any] = {
+            "collection_name": self.collection_name,
+            "vectors_config": VectorParams(size=dim, distance=_DISTANCES[self.similarity.lower()]),
+        }
+        optional_params = {
+            "shard_number": self.shard_number,
+            "replication_factor": self.replication_factor,
+            "write_consistency_factor": self.write_consistency_factor,
+            "on_disk_payload": self.on_disk_payload,
+            "hnsw_config": self.hnsw_config,
+            "optimizers_config": self.optimizers_config,
+            "wal_config": self.wal_config,
+            "quantization_config": self.quantization_config,
+            "init_from": self.init_from,
+        }
+        create_params.update({k: v for k, v in optional_params.items() if v is not None})
+        await self._get_client().create_collection(**create_params)
+
+    async def write(self, data: List[Dict[str, Any]]) -> List[str]:
+        if not data:
+            return []
+        dims = {len(item["embedding"]) for item in data}
+        if len(dims) > 1:
+            raise ValueError(f"All embeddings in one write must have the same size, got {sorted(dims)}.")
+        client = await self._ensure_collection(dims.pop())
 
         points = []
         ids = []
@@ -158,23 +179,23 @@ class QdrantStore:
             )
             points.append(point)
 
-        client.upsert(
+        await client.upsert(
             collection_name=self.collection_name,
             points=points,
         )
 
         return ids
 
-    def _query_by_embedding(
+    async def _query_by_embedding(
         self,
         embedding: List[float],
         limit: int = 10,
         score_threshold: Optional[float] = None,
         filter_conditions: Optional[Dict] = None,
     ) -> List[Dict[str, Any]]:
-        client = self._get_client()
+        client = await self._ensure_collection(len(embedding))
 
-        search_result = client.query_points(
+        search_result = await client.query_points(
             collection_name=self.collection_name,
             query=embedding,
             limit=limit,
@@ -195,31 +216,29 @@ class QdrantStore:
 
         return results
 
-    def query(
+    async def query(
         self,
         query_embedding: List[float],
         top_k: int = 10,
         score_threshold: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
-        return self._query_by_embedding(
+        return await self._query_by_embedding(
             embedding=query_embedding,
             limit=top_k,
             score_threshold=score_threshold,
         )
 
-    def get_collection_info(self) -> Dict[str, Any]:
-        client = self._get_client()
-        info = client.get_collection(collection_name=self.collection_name)
+    async def get_collection_info(self) -> Dict[str, Any]:
+        info = await self._get_client().get_collection(collection_name=self.collection_name)
         return {
             "name": self.collection_name,
             "points_count": info.points_count,
             "status": info.status,
         }
 
-    def get(self, point_id: str) -> Optional[Dict[str, Any]]:
+    async def get(self, point_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve a single point by ID. Returns None if not found."""
-        client = self._get_client()
-        results = client.retrieve(
+        results = await self._get_client().retrieve(
             collection_name=self.collection_name,
             ids=[point_id],
             with_payload=True,
@@ -230,16 +249,18 @@ class QdrantStore:
         point = results[0]
         return {"id": point.id, "payload": point.payload}
 
-    def delete(self, point_id: str) -> None:
+    async def delete(self, point_id: str) -> None:
         """Delete a single point by ID."""
-        from qdrant_client.models import PointIdsList
-
-        client = self._get_client()
-        client.delete(
+        await self._get_client().delete(
             collection_name=self.collection_name,
             points_selector=PointIdsList(points=[point_id]),
         )
 
-    def delete_collection(self):
-        client = self._get_client()
-        client.delete_collection(collection_name=self.collection_name)
+    async def delete_collection(self) -> None:
+        await self._get_client().delete_collection(collection_name=self.collection_name)
+        self._collection_dim = None
+
+    async def close(self) -> None:
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
