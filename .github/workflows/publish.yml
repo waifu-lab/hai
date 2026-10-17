@@ -1,0 +1,66 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      project: ${{ steps.target.outputs.project }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve package from tag
+        id: target
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          case "$TAG" in
+            v*)           dir=.;                     version="${TAG#v}" ;;
+            qdrant-v*)    dir=hai-package/qdrant;    version="${TAG#qdrant-v}" ;;
+            sqlitevec-v*) dir=hai-package/sqlitevec; version="${TAG#sqlitevec-v}" ;;
+            neo4j-v*)     dir=hai-package/neo4j;     version="${TAG#neo4j-v}" ;;
+            *) echo "::error::Unknown tag '$TAG'. Use v<ver>, qdrant-v<ver>, sqlitevec-v<ver> or neo4j-v<ver>."; exit 1 ;;
+          esac
+
+          read -r project declared < <(python -c 'import sys, tomllib; m = tomllib.load(open(sys.argv[1], "rb"))["project"]; print(m["name"], m["version"])' "$dir/pyproject.toml")
+          if [ "$declared" != "$version" ]; then
+            echo "::error::Tag '$TAG' is version $version but $dir/pyproject.toml declares $declared."
+            exit 1
+          fi
+
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "project=$project" >> "$GITHUB_OUTPUT"
+          echo "Publishing $project $version from $dir"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build "${{ steps.target.outputs.dir }}" --outdir dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/${{ needs.build.outputs.project }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
