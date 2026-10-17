@@ -1,9 +1,7 @@
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional
 
-from hai.graphstores.base import BaseGraphStore
-
-if TYPE_CHECKING:
-    from neo4j import AsyncDriver
+from hai.graphstores import BaseGraphStore
+from neo4j import AsyncDriver, AsyncGraphDatabase
 
 
 class Neo4jStore(BaseGraphStore):
@@ -20,19 +18,14 @@ class Neo4jStore(BaseGraphStore):
         self.username = username
         self.password = password
         self.database = database
-        self.driver: Optional["AsyncDriver"] = None
+        self.driver: Optional[AsyncDriver] = None
 
-    def _get_driver(self) -> "AsyncDriver":
+    def _get_driver(self) -> AsyncDriver:
         if not self.driver:
             raise RuntimeError("Neo4j driver not initialized. Call connect() first.")
         return self.driver
 
     async def connect(self) -> None:
-        try:
-            from neo4j import AsyncGraphDatabase
-        except ImportError as exc:
-            raise ImportError("neo4j package required. Install: pip install neo4j") from exc
-
         self.driver = AsyncGraphDatabase.driver(self.uri, auth=(self.username, self.password))
         async with self._get_driver().session(database=self.database) as session:
             await session.run("RETURN 1")

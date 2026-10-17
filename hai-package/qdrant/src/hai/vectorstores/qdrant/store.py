@@ -1,9 +1,11 @@
 import logging
 import uuid
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Distance, PointIdsList, PointStruct, VectorParams
+
+from hai.vectorstores import BaseVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -13,15 +15,30 @@ _DISTANCES = {
     "euclidean": Distance.EUCLID,
     "dot": Distance.DOT,
 }
+_ID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "hydrogen-ai-qdrant")
 
 
-class QdrantStore:
-    """Async Qdrant collection wrapper used by QdrantStoreWriter and VectorStoreRetriever.
+def _to_point_id(record_id: Union[str, int]) -> Union[str, int]:
+    """Qdrant only accepts unsigned ints and UUIDs as point ids; any other id maps to a stable UUID5."""
+    if isinstance(record_id, int):
+        return record_id
+    try:
+        return str(uuid.UUID(str(record_id)))
+    except ValueError:
+        return str(uuid.uuid5(_ID_NAMESPACE, str(record_id)))
+
+
+class QdrantStore(BaseVectorStore):
+    """Qdrant collection as a :class:`~hai.vectorstores.BaseVectorStore`.
 
     The collection is created on the first :meth:`write` or :meth:`query`. Its vector
     size is *embedding_dim* when given, otherwise the length of the first vector seen,
     so it always matches the embedding model in use. Vectors whose length differs from
     the collection's raise ``ValueError`` instead of failing inside Qdrant.
+
+    Record ids can be any string. Ids that are not UUIDs or integers are stored as a
+    UUID derived from the id, with the original kept in the payload under ``id``;
+    results, :meth:`get` and :meth:`delete` all use the original id.
     """
 
     def __init__(
@@ -160,10 +177,11 @@ class QdrantStore:
         ids = []
 
         for item in data:
-            point_id = item.get("id", str(uuid.uuid4()))
-            ids.append(point_id)
+            record_id = item.get("id") or str(uuid.uuid4())
+            ids.append(record_id)
 
             payload = {
+                "id": record_id,
                 self.content_field: item.get("content", ""),
                 self.name_field: item.get("name", ""),
             }
@@ -173,7 +191,7 @@ class QdrantStore:
                     payload[key] = value
 
             point = PointStruct(
-                id=point_id,
+                id=_to_point_id(record_id),
                 vector=item["embedding"],
                 payload=payload,
             )
@@ -206,7 +224,7 @@ class QdrantStore:
         results = []
         for scored_point in search_result.points:
             result = {
-                "id": scored_point.id,
+                "id": scored_point.payload.get("id", scored_point.id),
                 "score": scored_point.score,
                 "content": scored_point.payload.get(self.content_field, ""),
                 "name": scored_point.payload.get(self.name_field, ""),
@@ -238,22 +256,28 @@ class QdrantStore:
 
     async def get(self, point_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve a single point by ID. Returns None if not found."""
-        results = await self._get_client().retrieve(
+        client = self._get_client()
+        if not await client.collection_exists(self.collection_name):
+            return None
+        results = await client.retrieve(
             collection_name=self.collection_name,
-            ids=[point_id],
+            ids=[_to_point_id(point_id)],
             with_payload=True,
             with_vectors=False,
         )
         if not results:
             return None
         point = results[0]
-        return {"id": point.id, "payload": point.payload}
+        return {"id": point.payload.get("id", point.id), "payload": point.payload}
 
     async def delete(self, point_id: str) -> None:
         """Delete a single point by ID."""
-        await self._get_client().delete(
+        client = self._get_client()
+        if not await client.collection_exists(self.collection_name):
+            return
+        await client.delete(
             collection_name=self.collection_name,
-            points_selector=PointIdsList(points=[point_id]),
+            points_selector=PointIdsList(points=[_to_point_id(point_id)]),
         )
 
     async def delete_collection(self) -> None:

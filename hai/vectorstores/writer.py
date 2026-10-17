@@ -1,10 +1,11 @@
 from typing import Any, Dict
 
 from hai.core import BaseNode
-from hai.vectorstores.qdrant.QdrantClient import QdrantStore
+
+from .base import BaseVectorStore
 
 
-class QdrantStoreWriter(BaseNode):
+class VectorStoreWriter(BaseNode):
     """Upsert embedded chunks into *store*.
 
     Context:
@@ -15,7 +16,8 @@ class QdrantStoreWriter(BaseNode):
     def __init__(
         self,
         name: str = "VectorStoreWriter",
-        store: QdrantStore = None,
+        *,
+        store: BaseVectorStore,
     ):
         super().__init__(name)
         self.store = store

@@ -1,7 +1,8 @@
 from typing import Any, Dict, Optional
 
 from hai.core import BaseNode
-from hai.vectorstores.qdrant.QdrantClient import QdrantStore
+
+from .base import BaseVectorStore
 
 
 class VectorStoreRetriever(BaseNode):
@@ -15,7 +16,8 @@ class VectorStoreRetriever(BaseNode):
     def __init__(
         self,
         name: str = "VectorStoreRetriever",
-        store: QdrantStore = None,
+        *,
+        store: BaseVectorStore,
         top_k: int = 5,
         score_threshold: Optional[float] = None,
     ):

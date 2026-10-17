@@ -1,0 +1,22 @@
+[project]
+name = "hydrogen-ai-neo4j"
+version = "0.1.0"
+description = "Neo4j graph store for hydrogen-ai"
+authors = [
+    {name = "phillychi3",email = "phillychi3@gmail.com"}
+]
+license = {text = "MIT License"}
+readme = "readme.md"
+requires-python = ">=3.9"
+dependencies = [
+    "hydrogen-ai (>=0.2.0,<0.3.0)",
+    "neo4j (>=5.0.0,<7.0.0)"
+]
+
+
+[tool.poetry]
+packages = [{include = "hai/graphstores/neo4j", from = "src"}]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
