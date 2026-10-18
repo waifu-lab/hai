@@ -1,0 +1,91 @@
+---
+title: 語音助理
+---
+
+錄音 → 轉文字 → 模型回答 → 念出來。
+
+```bash
+pip install hydrogen-ai
+```
+
+```python
+import asyncio
+import os
+from pathlib import Path
+
+from hai.core import BaseNode, Flow
+from hai.providers import OpenAISTT, OpenAITTS, create_text_provider
+
+
+class TranscriptToMessages(BaseNode):
+    async def exec(self, context):
+        context["messages"] = [
+            {"role": "system", "content": "你是語音助理，回答要口語、簡短，不要用列點或表格。"},
+            {"role": "user", "content": context["transcript"]},
+        ]
+
+
+class AnswerToSpeech(BaseNode):
+    async def exec(self, context):
+        context["speech_text"] = context["assistant_message"]
+
+
+async def main():
+    key = os.environ["OPENAI_API_KEY"]
+    stt = OpenAISTT(api_key=key, language="zh")
+    llm = create_text_provider("openai", model="gpt-4o-mini", api_key=key)
+    tts = OpenAITTS(api_key=key, voice="nova")
+
+    stt >> TranscriptToMessages("to_messages") >> llm >> AnswerToSpeech("to_speech") >> tts
+
+    result = await Flow(stt).timeout(120).run({
+        "audio": Path("question.webm").read_bytes(),
+        "format": "webm",
+    })
+    print("你說：", result["transcript"])
+    print("回答：", result["assistant_message"])
+    Path("answer.mp3").write_bytes(result["speech_audio"])
+
+
+asyncio.run(main())
+```
+
+## 用自己的聲音
+
+架好 [GPT-SoVITS](/docs/providers/gptsovits) 後，只要換掉 `tts`：
+
+```python
+from hai.providers import GPTSoVITSTTS
+
+tts = GPTSoVITSTTS(
+    ref_audio_path="/srv/gpt-sovits/ref/me.wav",
+    prompt_text="參考音訊裡說的話。",
+)
+```
+
+輸出會變成 WAV，存檔時把副檔名改成 `.wav`。
+
+## 邊說邊播
+
+回答很長時，不等全部合成完就開始播放。把 `tts` 從流程拿掉，最後自己串流：
+
+```python
+stt >> TranscriptToMessages("to_messages") >> llm
+
+result = await Flow(stt).run({"audio": audio, "format": "webm"})
+async for chunk in tts.synthesize_stream(result["assistant_message"]):
+    player.feed(chunk)
+```
+
+## 加上工具
+
+讓語音助理能查資料，在 `TranscriptToMessages` 裡多放 `tools`：
+
+```python
+class TranscriptToMessages(BaseNode):
+    async def exec(self, context):
+        context["messages"] = [{"role": "user", "content": context["transcript"]}]
+        context["tools"] = [get_weather, current_time]
+```
+
+工具的寫法見[會用工具的助理](/docs/examples/tool-agent)。

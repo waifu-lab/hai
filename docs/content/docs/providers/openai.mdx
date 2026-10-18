@@ -1,0 +1,116 @@
+---
+title: OpenAI
+---
+
+## 文字
+
+```python
+import os
+from hai.core import Flow
+from hai.providers import OpenAIText
+
+llm = OpenAIText(api_key=os.environ["OPENAI_API_KEY"], model="gpt-4o-mini")
+
+result = await Flow(llm).run({
+    "messages": [{"role": "user", "content": "你好"}]
+})
+print(result["assistant_message"])
+```
+
+| 參數               | 預設          | 說明                          |
+| ------------------ | ------------- | ----------------------------- |
+| `model`            | `gpt-4o-mini` |                               |
+| `temperature`      | `0.7`         |                               |
+| `max_tokens`       | `1500`        | 輸出長度上限                  |
+| `stream`           | `False`       |                               |
+| `reasoning_effort` | `None`        | `low`、`medium`、`high`       |
+| `extra_params`     | `{}`          | 其他要送給 API 的欄位         |
+| `timeout`          | `60.0`        |                               |
+| `max_retries`      | `3`           |                               |
+
+### Reasoning 模型
+
+o 系列、gpt-5 等 reasoning 模型設 `reasoning_effort`：
+
+```python
+llm = OpenAIText(
+    api_key=os.environ["OPENAI_API_KEY"],
+    model="o4-mini",
+    reasoning_effort="medium",
+)
+```
+
+這時不要設 `temperature`，reasoning 模型不接受。`max_tokens` 不設就不限制，要限制的話記得留空間給推理過程。
+
+### 其他參數
+
+```python
+llm = OpenAIText(
+    api_key=os.environ["OPENAI_API_KEY"],
+    extra_params={"seed": 42, "top_p": 0.9},
+)
+```
+
+## Embedding
+
+```python
+from hai.providers import OpenAIEmbedding
+
+embedder = OpenAIEmbedding(
+    api_key=os.environ["OPENAI_API_KEY"],
+    model="text-embedding-3-small",   # 預設
+)
+```
+
+搭配 `EmbeddingProcessor`、`QueryEmbedder` 使用，見[向量化](/docs/embeddings)。
+
+## 語音辨識（STT）
+
+```python
+from pathlib import Path
+from hai.providers import OpenAISTT
+
+stt = OpenAISTT(api_key=os.environ["OPENAI_API_KEY"], language="zh")
+
+context = {"audio": Path("recording.webm").read_bytes(), "format": "webm"}
+await stt.exec(context)
+print(context["transcript"])
+```
+
+不放進流程也可以：
+
+```python
+text = await stt.transcribe(audio_bytes, format="mp3", language="zh")
+```
+
+| 參數       | 預設        | 說明                     |
+| ---------- | ----------- | ------------------------ |
+| `model`    | `whisper-1` |                          |
+| `language` | `None`      | 不填會自動判斷           |
+
+## 語音合成（TTS）
+
+```python
+from hai.providers import OpenAITTS
+
+tts = OpenAITTS(api_key=os.environ["OPENAI_API_KEY"], voice="nova")
+
+context = {"speech_text": "歡迎使用 Hydrogen AI。"}
+await tts.exec(context)
+Path("speech.mp3").write_bytes(context["speech_audio"])
+```
+
+邊合成邊播放：
+
+```python
+async for chunk in tts.synthesize_stream("歡迎使用 Hydrogen AI。"):
+    player.feed(chunk)
+```
+
+| 參數              | 預設    | 說明                                  |
+| ----------------- | ------- | ------------------------------------- |
+| `model`           | `tts-1` |                                       |
+| `voice`           | `nova`  |                                       |
+| `response_format` | `mp3`   | 音檔格式                              |
+| `speed`           | `1.0`   | 語速                                  |
+| `base_url`        |         | 改成其他 OpenAI 相容的 TTS 服務網址   |

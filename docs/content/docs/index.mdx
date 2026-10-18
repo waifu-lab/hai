@@ -1,0 +1,18 @@
+---
+title: 專案概覽
+---
+
+Hydrogen AI ，意欲這個套件很輕量。
+
+使用了pipline這個概念：
+
+- **節點**（`BaseNode`）：做一件事，例如讀檔、切塊、呼叫模型、寫進資料庫。
+- **Context**：一個普通的 dict，所有節點共用。前面的節點寫進去，後面的節點讀出來。
+- **Flow**：用 `>>` 把節點接起來，從第一個開始依序執行，也可以依回傳值分支。
+
+```python
+loader >> chunker >> embedder >> writer
+await Flow(loader).run({})
+```
+
+節點與 Flow 的設計參考了 [PocketFlow](https://github.com/The-Pocket/PocketFlow)，感謝 PocketFlow 的作者與貢獻者。

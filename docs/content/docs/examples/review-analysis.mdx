@@ -1,0 +1,100 @@
+---
+title: 評論分析
+---
+
+讀一份 CSV 評論，讓模型標出情緒和提到的問題，結果存回 CSV。
+
+`reviews.csv`：
+
+```text
+id,product,review
+1,耳機,音質很好但是戴久了耳朵會痛
+2,耳機,藍牙常常斷線，很失望
+3,充電器,充電速度快，體積也小
+```
+
+```python
+import asyncio
+import csv
+import json
+import os
+
+from hai.core import Flow
+from hai.loader import CSVLoader
+from hai.processor import ChunkProcessor, MetadataExtractor
+from hai.providers import create_text_provider
+
+
+async def main():
+    llm = create_text_provider(
+        "openai", model="gpt-4o-mini", api_key=os.environ["OPENAI_API_KEY"], temperature=0
+    )
+    llm.response_format = {"type": "json_object"}
+
+    loader = CSVLoader(source="reviews.csv", encoding="utf-8-sig")
+    to_chunks = ChunkProcessor()  # 不切塊，一列就是一個 chunk
+    analyze = MetadataExtractor(
+        llm=llm,
+        extraction_type="custom",
+        system_prompt=(
+            "分析這則商品評論，回傳 JSON：\n"
+            '{"id": "評論的 id", "sentiment": "positive|neutral|negative", '
+            '"issues": ["提到的問題，沒有就給空陣列"]}'
+        ),
+        user_prompt_template="{content}",
+    )
+    loader >> to_chunks >> analyze
+
+    result = await Flow(loader).timeout(300).run({})
+
+    with open("reviews_result.csv", "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow(["id", "sentiment", "issues"])
+        for item in result["extracted_metadata"]:
+            writer.writerow([item["id"], item["sentiment"], "、".join(item["issues"])])
+
+    print(json.dumps(result["extracted_metadata"], ensure_ascii=False, indent=2))
+
+
+asyncio.run(main())
+```
+
+`reviews_result.csv`：
+
+```text
+id,sentiment,issues
+1,neutral,配戴不舒適
+2,negative,藍牙斷線
+3,positive,
+```
+
+`temperature=0` 讓同一則評論每次的結果盡量一致。
+
+## 統計結果
+
+```python
+from collections import Counter
+
+sentiments = Counter(item["sentiment"] for item in result["extracted_metadata"])
+issues = Counter(issue for item in result["extracted_metadata"] for issue in item["issues"])
+
+print(sentiments)            # Counter({'negative': 1, 'neutral': 1, 'positive': 1})
+print(issues.most_common(5))
+```
+
+## 評論很多時
+
+每則評論一次請求，數量多時會比較久。可以用 `batch_size` 讓每次請求帶多則評論，prompt 要改成回傳陣列：
+
+```python
+loader = CSVLoader(source="reviews.csv", encoding="utf-8-sig", batch_size=20)
+analyze = MetadataExtractor(
+    llm=llm,
+    extraction_type="custom",
+    system_prompt=(
+        "分析每則評論，回傳 JSON："
+        '{"results": [{"id": "...", "sentiment": "...", "issues": [...]}]}'
+    ),
+    user_prompt_template="{content}",
+)
+```

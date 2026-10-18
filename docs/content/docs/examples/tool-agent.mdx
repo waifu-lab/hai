@@ -1,0 +1,98 @@
+---
+title: 會用工具的助理
+---
+
+讓模型自己決定要查天氣、換算匯率還是看時間。
+
+```python
+import asyncio
+import os
+from datetime import datetime
+from typing import Annotated, Literal
+
+from hai.core import Flow
+from hai.providers import create_text_provider
+from hai.tool import tool
+
+Currency = Literal["TWD", "USD", "JPY", "EUR"]
+RATES = {"TWD": 1.0, "USD": 32.0, "JPY": 0.21, "EUR": 35.0}
+
+
+@tool
+def get_weather(city: Annotated[str, "城市名稱，例如 台北"]) -> str:
+    """查詢城市目前的天氣。"""
+    weather = {"台北": "晴，28°C", "東京": "多雲，22°C", "倫敦": "小雨，14°C"}
+    return weather.get(city, f"查不到 {city} 的天氣")
+
+
+@tool
+def convert_currency(
+    amount: Annotated[float, "金額"],
+    from_currency: Annotated[Currency, "原本的幣別"],
+    to_currency: Annotated[Currency, "要換成的幣別"],
+) -> str:
+    """換算貨幣。"""
+    result = amount * RATES[from_currency] / RATES[to_currency]
+    return f"{amount} {from_currency} = {result:.2f} {to_currency}"
+
+
+@tool
+async def current_time() -> str:
+    """取得現在的日期和時間。"""
+    return datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
+async def main():
+    llm = create_text_provider(
+        "openai",
+        model="gpt-4o-mini",
+        api_key=os.environ["OPENAI_API_KEY"],
+    )
+
+    result = await Flow(llm).timeout(60).run({
+        "messages": [
+            {"role": "system", "content": "你是旅遊助理，用繁體中文回答。"},
+            {"role": "user", "content": "東京現在天氣如何？我帶了 10000 台幣，大概是多少日圓？"},
+        ],
+        "tools": [get_weather, convert_currency, current_time],
+    })
+    print(result["assistant_message"])
+
+
+asyncio.run(main())
+```
+
+```text
+東京現在多雲，氣溫約 22°C。10000 台幣大約可以換到 47619 日圓。
+```
+
+模型會先呼叫 `get_weather` 和 `convert_currency`，拿到結果後再組成回答。
+
+## 換成真的 API
+
+把工具裡的假資料換成真正的請求就好。會連網的工具建議寫成 `async def`：
+
+```python
+import httpx
+
+
+@tool
+async def get_weather(city: Annotated[str, "城市名稱"]) -> str:
+    """查詢城市目前的天氣。"""
+    async with httpx.AsyncClient() as client:
+        r = await client.get("https://wttr.in/" + city, params={"format": "3"})
+        return r.text
+```
+
+## 看模型呼叫了哪些工具
+
+跑完後 `result["messages"]` 裡有完整過程，包含每次工具呼叫和結果：
+
+```python
+for msg in result["messages"]:
+    if msg.get("tool_calls"):
+        for call in msg["tool_calls"]:
+            print("呼叫", call["function"]["name"], call["function"]["arguments"])
+```
+
+要限制工具呼叫的次數，見[工具呼叫](/docs/tools#限制呼叫次數)。

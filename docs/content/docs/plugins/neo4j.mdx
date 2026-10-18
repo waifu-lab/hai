@@ -1,0 +1,138 @@
+---
+title: Neo4j
+---
+
+## 安裝
+
+```bash
+pip install hydrogen-ai-neo4j
+```
+
+還需要一個 Neo4j 服務。本機測試可以用 Docker：
+
+```bash
+docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/your-password neo4j:5
+```
+
+## 連線
+
+```python
+import os
+from hai.graphstores.neo4j import Neo4jStore
+
+store = Neo4jStore(
+    uri="bolt://localhost:7687",
+    username="neo4j",
+    password=os.environ["NEO4J_PASSWORD"],
+    database="neo4j",
+)
+await store.connect()
+# ...
+await store.close()
+```
+
+## 讀寫
+
+```python
+await store.execute("MERGE (p:Person {name: $name})", {"name": "Ivy"})
+
+rows = await store.query(
+    "MATCH (p:Person {name: $name}) RETURN p.name AS name",
+    {"name": "Ivy"},
+)
+print(rows)  # [{'name': 'Ivy'}]
+```
+
+`execute()` 用來寫入，`query()` 用來讀取。值用 `$參數` 傳，不要直接拼進字串。
+
+## 全文搜尋
+
+先建立全文索引：
+
+```cypher
+CREATE FULLTEXT INDEX person_names IF NOT EXISTS
+FOR (p:Person) ON EACH [p.name]
+```
+
+```python
+results = await store.search("person_names", "Ivy", limit=5)
+# [{"node": {"name": "Ivy"}, "score": 1.23}, ...]
+```
+
+## 接進流程
+
+```python
+import asyncio
+import os
+from hai.core import BaseNode, Flow
+from hai.graphstores.neo4j import Neo4jStore
+
+
+class WritePeople(BaseNode):
+    def __init__(self, store):
+        super().__init__("write_people")
+        self.store = store
+
+    async def exec(self, context):
+        for name in context["people"]:
+            await self.store.execute("MERGE (p:Person {name: $name})", {"name": name})
+
+
+class FindPerson(BaseNode):
+    def __init__(self, store):
+        super().__init__("find_person")
+        self.store = store
+
+    async def exec(self, context):
+        context["graph_results"] = await self.store.query(
+            "MATCH (p:Person {name: $name}) RETURN p.name AS name",
+            {"name": context["person_name"]},
+        )
+
+
+async def main():
+    store = Neo4jStore(password=os.environ["NEO4J_PASSWORD"])
+    writer = WritePeople(store)
+    writer >> FindPerson(store)
+
+    try:
+        await store.connect()
+        result = await Flow(writer).run({
+            "people": ["Ivy", "Leo"],
+            "person_name": "Ivy",
+        })
+        print(result["graph_results"])
+    finally:
+        await store.close()
+
+
+asyncio.run(main())
+```
+
+## 從擷取結果建圖
+
+把 [`FactExtractor`](/docs/extraction) 的結果存成圖：
+
+```python
+for fact in context["extracted_facts"]:
+    await store.execute(
+        "MERGE (s:Entity {name: $subject}) "
+        "MERGE (o:Entity {name: $object}) "
+        "MERGE (s)-[r:RELATED {predicate: $predicate}]->(o) "
+        "SET r.fact = $fact, r.confidence = $confidence",
+        {
+            "subject": fact["subject"],
+            "object": fact["object"],
+            "predicate": fact["predicate"],
+            "fact": fact["fact"],
+            "confidence": fact["confidence"],
+        },
+    )
+```
+
+關係的種類存在 `predicate` 屬性裡，查詢時這樣用：
+
+```cypher
+MATCH (s:Entity)-[r:RELATED {predicate: "WORKS_AT"}]->(o:Entity)
+RETURN s.name, o.name
+```

@@ -1,0 +1,5 @@
+{
+  "title": "模型供應商",
+  "defaultOpen": true,
+  "pages": ["index", "openai", "anthropic", "google", "ollama", "gptsovits"]
+}

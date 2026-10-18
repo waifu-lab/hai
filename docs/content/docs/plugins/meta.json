@@ -1,0 +1,6 @@
+{
+  "title": "Plugins",
+  "description": "獨立安裝的資料庫整合套件",
+  "defaultOpen": true,
+  "pages": ["index", "qdrant", "sqlitevec", "neo4j"]
+}

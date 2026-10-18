@@ -1,0 +1,87 @@
+---
+title: 文件載入
+---
+
+## 基本用法
+
+```python
+from hai.core import Flow
+from hai.loader import TextLoader
+
+loader = TextLoader(source="./data", recursive=True)
+
+documents = await loader.load()       # 直接拿 Document 列表
+result = await Flow(loader).run({})   # 或放進流程，結果在 result["documents"]
+```
+
+檔案類 loader 共用的參數：
+
+| 參數        | 說明                                         |
+| ----------- | -------------------------------------------- |
+| `source`    | 檔案或資料夾                                 |
+| `pattern`   | 資料夾裡要讀哪些檔案，例如 `*.md`            |
+| `recursive` | 是否讀子資料夾，預設 `False`                 |
+| `encoding`  | 檔案編碼，不填會自動判斷；中文檔案建議明確寫 |
+| `strict`    | `True` 時讀不到檔案就拋錯，預設是跳過        |
+
+## 支援的格式
+
+| 類別             | 預設 pattern | 每份 Document 是       |
+| ---------------- | ------------ | ---------------------- |
+| `TextLoader`     | `*.txt`      | 一個檔案               |
+| `MarkdownLoader` | `*.md`       | 一個檔案               |
+| `JSONLoader`     | `*.json`     | 陣列的一個元素         |
+| `CSVLoader`      | `*.csv`      | 一列                   |
+| `WebLoader`      |              | 一個網址               |
+
+## Markdown
+
+```python
+from hai.loader import MarkdownLoader
+
+loader = MarkdownLoader(source="./docs", recursive=True)
+```
+
+| 參數                  | 預設    | 說明                                         |
+| --------------------- | ------- | -------------------------------------------- |
+| `extract_frontmatter` | `True`  | frontmatter 放進 metadata，並從內容移除      |
+| `extract_metadata`    | `False` | 把標題、連結、圖片、表格整理進 metadata      |
+| `extract_text`        | `False` | 移除 Markdown 語法，只留純文字               |
+| `preserve_code_blocks`| `False` | 搭配 `extract_text`，保留程式碼區塊          |
+
+## JSON / JSONL
+
+```python
+from hai.loader import JSONLoader
+
+# 用 text 欄位當內容，其他欄位放進 metadata
+loader = JSONLoader(source="./data/records.json", content_field="text")
+
+# 讀資料夾裡的 JSONL
+loader = JSONLoader(source="./data", pattern="*.jsonl", content_field="text")
+```
+
+讀 `.jsonl` 要記得改 `pattern`，預設的 `*.json` 抓不到。
+
+## CSV
+
+```python
+from hai.loader import CSVLoader
+
+loader = CSVLoader(source="./data/people.csv", encoding="utf-8-sig")
+tsv = CSVLoader(source="./data/people.tsv", delimiter="\t")
+```
+
+第一列是欄位名稱。Excel 匯出的 CSV 通常要用 `encoding="utf-8-sig"`。
+
+JSON 和 CSV 都可以設 `batch_size=10`，把每 10 筆合成一份 Document。
+
+## 網頁
+
+```python
+from hai.loader import WebLoader
+
+loader = WebLoader(urls=["https://example.com"], timeout=30)
+```
+
+只抓 HTML 裡的文字，需要 JavaScript 才會顯示內容的網頁抓不到。設 `extract_links=True` 可以把頁面上的連結記到 metadata。

@@ -1,0 +1,59 @@
+---
+title: 向量化
+---
+
+## 向量化 chunks
+
+```python
+import os
+from hai.embedders.openai.openai import EmbeddingProcessor
+from hai.providers import OpenAIEmbedding
+
+embedder = OpenAIEmbedding(api_key=os.environ["OPENAI_API_KEY"])
+processor = EmbeddingProcessor(embedder=embedder, batch_size=32)
+
+context = {"chunks": [{"content": "一段內容", "name": "note.md"}]}
+await processor.exec(context)
+print(context["embedded_chunks"][0]["embedding"])
+```
+
+通常接在 `ChunkProcessor` 後面、`VectorStoreWriter` 前面：
+
+```python
+chunker >> processor >> writer
+```
+
+`batch_size` 是每次請求送幾個 chunk。
+
+## 向量化查詢
+
+```python
+from hai.embedders.openai.openai import QueryEmbedder
+
+query_embedder = QueryEmbedder(embedder=embedder)
+context = {"query": "如何建立流程？"}
+await query_embedder.exec(context)
+print(context["query_embedding"])
+```
+
+接在 `VectorStoreRetriever` 前面：
+
+```python
+query_embedder >> retriever
+```
+
+## 換成其他 provider
+
+`embedder` 可以換成任何 embedding provider，例如 `GoogleEmbedding`，或用 `ProviderEmbedding` 接 Ollama。設定方式見 [OpenAI](/docs/providers/openai#embedding)、[Google](/docs/providers/google#embedding)、[Ollama](/docs/providers/ollama#embedding)。
+
+寫入和查詢要用同一個 embedding 模型，不然搜不到正確結果。換模型的話，資料要重新導入。
+
+## 直接呼叫 provider
+
+不經過處理節點，直接把文字轉成向量：
+
+```python
+context = {"input": ["第一段", "第二段"]}
+await embedder.exec(context)
+context["embeddings"]  # 兩個向量
+```

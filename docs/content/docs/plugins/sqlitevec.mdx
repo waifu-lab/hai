@@ -1,0 +1,93 @@
+---
+title: sqlite-vec
+---
+
+把向量存在一個 SQLite 檔案裡，不用另外跑資料庫服務。
+
+## 安裝
+
+```bash
+pip install hydrogen-ai-sqlitevec
+```
+
+## 建立 store
+
+```python
+from hai.vectorstores.sqlitevec import SqliteVecStore
+
+store = SqliteVecStore(path="knowledge.db", collection_name="docs")
+
+# 只放記憶體，適合測試
+store = SqliteVecStore(path=":memory:")
+```
+
+| 參數              | 預設       | 說明                                  |
+| ----------------- | ---------- | ------------------------------------- |
+| `path`            | `hai.db`   | 資料庫檔案，或 `:memory:`             |
+| `collection_name` | `Document` | 只能用英文、數字、底線                |
+| `similarity`      | `cosine`   | `cosine`、`euclid`、`l1`              |
+| `embedding_dim`   |            | 向量維度，不填會自動判斷              |
+
+## 寫入與查詢
+
+```python
+import asyncio
+from hai.vectorstores.sqlitevec import SqliteVecStore
+
+
+async def main():
+    store = SqliteVecStore(path=":memory:")
+    try:
+        await store.write([{
+            "id": "intro-0",
+            "content": "SQLite 可以保存文件與向量。",
+            "name": "intro.txt",
+            "embedding": [1.0, 0.0, 0.0],
+            "category": "guide",
+        }])
+        results = await store.query([1.0, 0.0, 0.0], top_k=1)
+        print(results[0]["content"], results[0]["score"])
+    finally:
+        await store.close()
+
+
+asyncio.run(main())
+```
+
+## 接進流程
+
+```python
+from hai.vectorstores import VectorStoreWriter, VectorStoreRetriever
+
+writer = VectorStoreWriter(store=store)
+retriever = VectorStoreRetriever(store=store, top_k=5)
+
+chunker >> embed_chunks >> writer     # 導入
+query_embedder >> retriever           # 查詢
+```
+
+完整範例見 [RAG 範例](/docs/examples/rag)。
+
+## 過濾低分結果
+
+```python
+retriever = VectorStoreRetriever(store=store, top_k=5, score_threshold=0.75)
+```
+
+| `similarity`  | 分數越大代表 | `score_threshold`  |
+| ------------- | ------------ | ------------------ |
+| `cosine`      | 越相似       | 低於這個分數的過濾 |
+| `euclid`、`l1` | 越不相似     | 高於這個距離的過濾 |
+
+## 其他操作
+
+```python
+await store.get("intro-0")
+await store.delete("intro-0")
+await store.get_collection_info()
+await store.delete_collection()
+```
+
+## 無法載入 extension
+
+出現 `RuntimeError: ... cannot load extensions`，代表你的 Python 不支援 SQLite extension。改用 python.org、Homebrew、uv 或 pyenv 安裝的 Python。

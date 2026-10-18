@@ -1,0 +1,71 @@
+---
+title: 聊天機器人
+---
+
+在終端機裡聊天，回答逐字輸出，並記得前面說過的話。
+
+```bash
+pip install hydrogen-ai
+```
+
+```python
+import asyncio
+import os
+
+from hai.providers import create_text_provider
+
+SYSTEM_PROMPT = "你是親切的助理，用繁體中文簡短回答。"
+MAX_HISTORY = 20  # 只保留最近 20 則訊息
+
+
+async def main():
+    llm = create_text_provider(
+        "openai",
+        model="gpt-4o-mini",
+        api_key=os.environ["OPENAI_API_KEY"],
+        stream=True,
+    )
+    messages = []
+
+    while True:
+        user_input = input("你：").strip()
+        if user_input in ("exit", "quit"):
+            break
+        if not user_input:
+            continue
+
+        messages.append({"role": "user", "content": user_input})
+
+        print("AI：", end="", flush=True)
+        result = await llm.call_once(
+            messages[-MAX_HISTORY:],
+            system_prompt=SYSTEM_PROMPT,
+            on_chunk=lambda text: print(text, end="", flush=True),
+        )
+        print()
+
+        messages.append({"role": "assistant", "content": result.content})
+
+
+asyncio.run(main())
+```
+
+```text
+你：我叫 Ivy
+AI：你好，Ivy！有什麼我可以幫你的嗎？
+你：我叫什麼名字？
+AI：你叫 Ivy。
+```
+
+## 換成其他模型
+
+把 `create_text_provider` 的第一個參數換掉：
+
+```python
+llm = create_text_provider("anthropic", model="claude-sonnet-4-5", api_key=..., stream=True)
+llm = create_text_provider("ollama", model="gemma3", stream=True)
+```
+
+## 不要逐字輸出
+
+拿掉 `stream=True` 和 `on_chunk`，`call_once()` 會等回答完整後才回傳。

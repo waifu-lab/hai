@@ -1,0 +1,71 @@
+---
+title: Anthropic
+---
+
+## 使用 Claude
+
+```python
+import os
+from hai.core import Flow
+from hai.providers import AnthropicText
+
+llm = AnthropicText(
+    api_key=os.environ["ANTHROPIC_API_KEY"],
+    model="claude-sonnet-4-5",
+)
+
+result = await Flow(llm).run({
+    "messages": [
+        {"role": "system", "content": "請用繁體中文回答。"},
+        {"role": "user", "content": "什麼是 RAG？"},
+    ]
+})
+print(result["assistant_message"])
+```
+
+| 參數               | 預設                | 說明                        |
+| ------------------ | ------------------- | --------------------------- |
+| `model`            | `claude-sonnet-4-5` |                             |
+| `temperature`      | `0.7`               |                             |
+| `max_tokens`       | `1500`              | 輸出長度上限                |
+| `stream`           | `False`             |                             |
+| `reasoning_effort` | `None`              | `low`、`medium`、`high`     |
+| `thinking_budget`  | `None`              | 思考用的 token 數，至少 1024 |
+| `thinking_mode`    | `None`              | `adaptive`：讓模型自己決定  |
+| `extra_params`     | `{}`                | 其他要送給 API 的欄位       |
+| `timeout`          | `60.0`              |                             |
+| `max_retries`      | `3`                 |                             |
+
+## Extended thinking
+
+讓 Claude 先思考再回答，三種方式選一種：
+
+```python
+# 簡單設定強度
+llm = AnthropicText(api_key=key, reasoning_effort="medium")
+
+# 指定思考用的 token 數
+llm = AnthropicText(api_key=key, thinking_budget=8000)
+
+# 讓模型自己決定
+llm = AnthropicText(api_key=key, thinking_mode="adaptive")
+```
+
+開啟 thinking 時：
+
+- 不要設 `temperature`。
+- `max_tokens` 不設的話會自動留夠空間；要自己設的話，必須大於 `thinking_budget`。
+- 三種方式不能同時用，設錯會直接拋 `ValueError`。
+
+用 `create_text_provider` 也能傳：
+
+```python
+from hai.providers import create_text_provider
+
+llm = create_text_provider(
+    "anthropic",
+    model="claude-sonnet-4-5",
+    api_key=os.environ["ANTHROPIC_API_KEY"],
+    reasoning_effort="high",
+)
+```

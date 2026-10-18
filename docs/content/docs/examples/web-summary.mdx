@@ -1,0 +1,86 @@
+---
+title: 網頁摘要
+---
+
+抓幾個網頁，每段先各自摘要，再整理成一份重點。
+
+```python
+import asyncio
+import os
+
+from hai.core import BaseNode, Flow
+from hai.loader import WebLoader
+from hai.processor import ChunkProcessor, MetadataExtractor, RecursiveSplitter
+from hai.providers import create_text_provider
+
+URLS = [
+    "https://example.com/article-1",
+    "https://example.com/article-2",
+]
+
+
+class BuildFinalPrompt(BaseNode):
+    """把每段的摘要合起來，請模型寫最後的總結。"""
+
+    async def exec(self, context):
+        points = "\n".join(f"- {item['summary']}" for item in context["extracted_metadata"])
+        context["messages"] = [
+            {"role": "system", "content": "你是編輯，用繁體中文寫出 5 點以內的重點摘要。"},
+            {"role": "user", "content": f"以下是各段落的摘要：\n{points}"},
+        ]
+
+
+async def main():
+    api_key = os.environ["OPENAI_API_KEY"]
+
+    # 逐段摘要用的模型，回傳 JSON
+    json_llm = create_text_provider("openai", model="gpt-4o-mini", api_key=api_key)
+    json_llm.response_format = {"type": "json_object"}
+
+    # 寫最後總結的模型
+    llm = create_text_provider("openai", model="gpt-4o-mini", api_key=api_key)
+
+    loader = WebLoader(urls=URLS, timeout=30)
+    chunker = ChunkProcessor(splitter=RecursiveSplitter(chunk_size=2000, chunk_overlap=100))
+    summarize = MetadataExtractor(
+        llm=json_llm,
+        extraction_type="custom",
+        system_prompt='用一句繁體中文摘要這段內容，回傳 {"summary": "..."}。',
+        user_prompt_template="{content}",
+    )
+    loader >> chunker >> summarize >> BuildFinalPrompt("final") >> llm
+
+    result = await Flow(loader).timeout(300).run({})
+    print(result["assistant_message"])
+
+
+asyncio.run(main())
+```
+
+`MetadataExtractor` 對每個段落各問一次模型，結果放在 `extracted_metadata`，每筆都有 `summary`。
+
+## 也抽出關鍵字
+
+改 `system_prompt`，要模型多回傳幾個欄位：
+
+```python
+summarize = MetadataExtractor(
+    llm=json_llm,
+    extraction_type="custom",
+    system_prompt=(
+        "分析這段內容，回傳 JSON："
+        '{"summary": "一句摘要", "keywords": ["關鍵字"], "sentiment": "positive|neutral|negative"}'
+    ),
+    user_prompt_template="{content}",
+)
+```
+
+## 摘要本機檔案
+
+把 `WebLoader` 換成其他 loader：
+
+```python
+from hai.loader import TextLoader
+
+loader = TextLoader(source="./reports", pattern="*.txt")
+```

@@ -1,0 +1,53 @@
+---
+title: Google
+---
+
+使用 Gemini API，API key 在 [Google AI Studio](https://aistudio.google.com/) 申請。
+
+## 文字
+
+```python
+import os
+from hai.core import Flow
+from hai.providers import GoogleText
+
+llm = GoogleText(api_key=os.environ["GEMINI_API_KEY"], model="gemini-2.5-flash")
+
+result = await Flow(llm).run({
+    "messages": [{"role": "user", "content": "用三句話介紹台北。"}]
+})
+print(result["assistant_message"])
+```
+
+| 參數          | 預設               |
+| ------------- | ------------------ |
+| `model`       | `gemini-2.5-flash` |
+| `temperature` | `0.7`              |
+| `max_tokens`  | `1500`             |
+| `stream`      | `False`            |
+| `timeout`     | `60.0`             |
+| `max_retries` | `3`                |
+
+Gemini 2.5 會先思考再回答，思考也會用掉 `max_tokens`。回答常被截斷的話，把 `max_tokens` 調高。
+
+## Embedding
+
+```python
+from hai.providers import GoogleEmbedding
+
+embedder = GoogleEmbedding(
+    api_key=os.environ["GEMINI_API_KEY"],
+    model="text-embedding-004",   # 預設
+)
+```
+
+搭配 `EmbeddingProcessor`、`QueryEmbedder` 使用，見[向量化](/docs/embeddings)。
+
+## 列出模型
+
+```python
+from hai.providers import Google
+
+models = await Google(api_key=os.environ["GEMINI_API_KEY"]).models()
+# ['gemini-2.5-flash', 'gemini-2.5-pro', 'text-embedding-004', ...]
+```

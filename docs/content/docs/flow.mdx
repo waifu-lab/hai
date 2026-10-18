@@ -1,0 +1,86 @@
+---
+title: 流程與節點
+---
+
+## 寫一個節點
+
+繼承 `BaseNode`，實作 `async def exec(self, context)`，結果寫進 `context`：
+
+```python
+import asyncio
+from hai.core import BaseNode, Flow
+
+
+class NormalizeQuery(BaseNode):
+    async def exec(self, context):
+        context["query"] = context["query"].strip()
+
+
+class PrintQuery(BaseNode):
+    async def exec(self, context):
+        print(context["query"])
+
+
+async def main():
+    normalize = NormalizeQuery("normalize")
+    output = PrintQuery("output")
+    normalize >> output
+    await Flow(normalize).run({"query": "  hello  "})
+
+
+asyncio.run(main())
+```
+
+## 串接
+
+```python
+first >> second >> third
+await Flow(first).run({})
+```
+
+`Flow` 要傳第一個節點。不要寫成 `Flow(first >> second >> third)`，那樣會從 `third` 開始跑。
+
+## 分支
+
+`exec` 回傳分支名稱，就會走對應的節點：
+
+```python
+class Review(BaseNode):
+    async def exec(self, context):
+        return "approved" if context.get("approved") else "revise"
+
+
+review >> {"approved": publish, "revise": rewrite}
+```
+
+也可以回傳 `{"next": "revise"}`。回傳的名稱找不到對應分支時，走 `>>` 接的預設節點，沒有就結束。
+
+## 逾時
+
+```python
+await Flow(first).timeout(30).run({})
+```
+
+整條流程超過 30 秒就中斷。
+
+## 錯誤處理
+
+```python
+def handle_error(node, exc):
+    print(f"{node.name} 失敗：{exc}")
+    return False  # False：跳過這個節點繼續；True：中斷並拋出
+
+await Flow(first).on_error(handle_error).run({})
+```
+
+只想處理單一節點的錯誤，在節點裡覆寫 `exec_fallback`：
+
+```python
+class Fetch(BaseNode):
+    async def exec(self, context):
+        context["data"] = await fetch()
+
+    def exec_fallback(self, context, exc):
+        context["data"] = None
+        return self.next(None)
+```

@@ -1,0 +1,61 @@
+---
+title: 開發與文檔維護
+---
+
+## Python 開發
+
+核心用 Poetry 打包，`hai-package/` 下的每個 plugin 各有自己的 `pyproject.toml`
+
+```bash
+poetry sync
+```
+
+## 文檔
+
+文檔在 `docs/`，用 Fumadocs + TanStack Start + Vite。內容放在 `docs/content/docs/`。需要 Node.js 24 和 pnpm：
+
+```bash
+cd docs
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+打開 `http://localhost:3000/docs`。
+
+| 指令               | 用途                         |
+| ------------------ | ---------------------------- |
+| `pnpm dev`         | 開發伺服器                   |
+| `pnpm types:check` | TypeScript 型別檢查          |
+| `pnpm build`       | 正式建置                     |
+| `pnpm lint`        | Biome 檢查                   |
+| `pnpm format`      | Biome 格式化（會直接改檔案） |
+
+## 新增頁面
+
+在 `content/docs/` 新增 `.mdx`，寫好 frontmatter：
+
+```mdx
+---
+title: 新功能
+description: ...
+---
+
+## 基本用法
+```
+
+再把檔名（不含副檔名）加進同一層的 `meta.json`。
+
+## 寫新的資料庫 plugin
+
+向量資料庫實作 `BaseVectorStore`，圖資料庫實作 `BaseGraphStore`。新套件放在 `hai-package/`，原始碼照 `src/hai/vectorstores/<名稱>` 或 `src/hai/graphstores/<名稱>` 的路徑放。
+
+## 發布
+
+在 GitHub 發 Release 時，`.github/workflows/publish.yml` 會依 tag 決定要發哪個套件：
+
+| Tag                    | 套件目錄                |
+| ---------------------- | ----------------------- |
+| `v<version>`           | 根目錄（核心）          |
+| `qdrant-v<version>`    | `hai-package/qdrant`    |
+| `sqlitevec-v<version>` | `hai-package/sqlitevec` |
+| `neo4j-v<version>`     | `hai-package/neo4j`     |

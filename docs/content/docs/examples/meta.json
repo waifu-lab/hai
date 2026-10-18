@@ -1,0 +1,15 @@
+{
+  "title": "範例",
+  "defaultOpen": true,
+  "pages": [
+    "chatbot",
+    "tool-agent",
+    "routing",
+    "rag",
+    "local-rag",
+    "web-summary",
+    "review-analysis",
+    "knowledge-graph",
+    "voice-assistant"
+  ]
+}

@@ -1,0 +1,101 @@
+---
+title: Qdrant
+---
+
+## 安裝
+
+```bash
+pip install hydrogen-ai-qdrant
+```
+
+## 建立 store
+
+```python
+from hai.vectorstores.qdrant import QdrantStore
+
+# 記憶體，程式結束資料就沒了，適合測試
+store = QdrantStore(location=":memory:", collection_name="demo")
+
+# 存在本機資料夾
+store = QdrantStore(path="./qdrant-data", collection_name="docs")
+
+# 連到 Qdrant 服務
+store = QdrantStore(
+    url=os.environ["QDRANT_URL"],
+    api_key=os.environ.get("QDRANT_API_KEY"),
+    collection_name="docs",
+)
+```
+
+| 參數              | 預設       | 說明                                   |
+| ----------------- | ---------- | -------------------------------------- |
+| `location`        |            | `:memory:` 用記憶體                    |
+| `path`            |            | 本機資料夾                             |
+| `url` / `api_key` |            | 遠端服務                               |
+| `collection_name` | `Document` |                                        |
+| `similarity`      | `cosine`   | `cosine`、`euclid`、`dot`              |
+| `embedding_dim`   |            | 向量維度，不填會自動判斷               |
+| `timeout`         |            |                                        |
+
+## 寫入與查詢
+
+```python
+import asyncio
+from hai.vectorstores.qdrant import QdrantStore
+
+
+async def main():
+    store = QdrantStore(location=":memory:", collection_name="demo")
+    try:
+        await store.write([{
+            "id": "intro-0",
+            "content": "Flow 使用 context 在節點之間傳遞資料。",
+            "name": "intro.txt",
+            "embedding": [1.0, 0.0, 0.0],
+            "category": "guide",
+        }])
+        results = await store.query([1.0, 0.0, 0.0], top_k=1)
+        print(results[0]["content"], results[0]["score"])
+    finally:
+        await store.close()
+
+
+asyncio.run(main())
+```
+
+`id` 可以用任意字串。
+
+## 接進流程
+
+```python
+from hai.vectorstores import VectorStoreWriter, VectorStoreRetriever
+
+writer = VectorStoreWriter(store=store)
+retriever = VectorStoreRetriever(store=store, top_k=5)
+
+chunker >> embed_chunks >> writer     # 導入
+query_embedder >> retriever           # 查詢
+```
+
+完整範例見 [RAG 範例](/docs/examples/rag)。
+
+## 過濾低分結果
+
+```python
+retriever = VectorStoreRetriever(store=store, top_k=5, score_threshold=0.75)
+```
+
+| `similarity` | 分數越大代表 | `score_threshold`  |
+| ------------ | ------------ | ------------------ |
+| `cosine`     | 越相似       | 低於這個分數的過濾 |
+| `dot`        | 越相似       | 低於這個分數的過濾 |
+| `euclid`     | 越不相似     | 高於這個距離的過濾 |
+
+## 其他操作
+
+```python
+await store.get("intro-0")
+await store.delete("intro-0")
+await store.get_collection_info()
+await store.delete_collection()   # 刪掉整個 collection
+```

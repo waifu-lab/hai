@@ -1,0 +1,42 @@
+---
+title: 圖資料庫
+---
+
+圖資料庫目前支援 Neo4j，要另外安裝 [Neo4j plugin](/docs/plugins/neo4j)。
+
+## 基本操作
+
+```python
+from hai.graphstores.neo4j import Neo4jStore
+
+store = Neo4jStore(uri="bolt://localhost:7687", username="neo4j", password="...")
+await store.connect()
+
+await store.execute("MERGE (p:Person {name: $name})", {"name": "Ivy"})
+rows = await store.query("MATCH (p:Person) RETURN p.name AS name")
+hits = await store.search("person_names", "Ivy")  # 全文搜尋，需先建索引
+
+await store.close()
+```
+
+## 接進流程
+
+寫一個節點包住 store：
+
+```python
+from hai.core import BaseNode
+
+
+class GraphQuery(BaseNode):
+    def __init__(self, store):
+        super().__init__("graph_query")
+        self.store = store
+
+    async def exec(self, context):
+        context["graph_results"] = await self.store.query(
+            "MATCH (p:Person {name: $name}) RETURN p.name AS name",
+            {"name": context["name"]},
+        )
+```
+
+在流程開始前 `connect()`，結束後 `close()`。完整範例見 [Neo4j](/docs/plugins/neo4j#接進流程)。

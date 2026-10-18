@@ -1,0 +1,40 @@
+---
+title: 語音辨識與合成
+---
+
+| 用途       | 類別           | 設定                                                |
+| ---------- | -------------- | --------------------------------------------------- |
+| 語音轉文字 | `OpenAISTT`    | [OpenAI](/docs/providers/openai#語音辨識stt)        |
+| 文字轉語音 | `OpenAITTS`    | [OpenAI](/docs/providers/openai#語音合成tts)        |
+| 文字轉語音 | `GPTSoVITSTTS` | [GPT-SoVITS](/docs/providers/gptsovits)，可模仿聲音 |
+
+## 語音轉文字
+
+```python
+from pathlib import Path
+
+context = {"audio": Path("recording.webm").read_bytes(), "format": "webm"}
+await stt.exec(context)
+print(context["transcript"])
+```
+
+`format` 要跟音檔格式一致。
+
+## 文字轉語音
+
+```python
+context = {"speech_text": "歡迎使用 Hydrogen AI。"}
+await tts.exec(context)
+Path("speech.mp3").write_bytes(context["speech_audio"])
+```
+
+想邊合成邊播放：
+
+```python
+async for chunk in tts.synthesize_stream("歡迎使用 Hydrogen AI。"):
+    player.feed(chunk)
+```
+
+## 語音對話
+
+把語音轉文字、文字模型、文字轉語音串成一條流程，見[語音助理範例](/docs/examples/voice-assistant)。

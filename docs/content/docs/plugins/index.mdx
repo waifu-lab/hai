@@ -1,0 +1,21 @@
+---
+title: Plugin 總覽
+---
+
+資料庫整合要另外安裝，用到哪個裝哪個：
+
+| Plugin                                | 安裝                                | 用途                               |
+| ------------------------------------- | ----------------------------------- | ---------------------------------- |
+| [Qdrant](/docs/plugins/qdrant)        | `pip install hydrogen-ai-qdrant`    | 向量資料庫，記憶體、本機或遠端     |
+| [sqlite-vec](/docs/plugins/sqlitevec) | `pip install hydrogen-ai-sqlitevec` | 向量資料庫，存成一個 SQLite 檔案   |
+| [Neo4j](/docs/plugins/neo4j)          | `pip install hydrogen-ai-neo4j`     | 圖資料庫                           |
+
+裝好之後直接匯入：
+
+```python
+from hai.vectorstores.qdrant import QdrantStore
+from hai.vectorstores.sqlitevec import SqliteVecStore
+from hai.graphstores.neo4j import Neo4jStore
+```
+
+不知道選哪個向量資料庫的話：想要零設定、資料存成單一檔案，用 sqlite-vec；資料量大或要多台機器共用，用 Qdrant。兩者用法一樣，之後換也只要改建立 store 那一行。

@@ -1,0 +1,91 @@
+---
+title: 工具呼叫
+---
+
+## 定義工具
+
+在函式上加 `@tool`：
+
+```python
+from typing import Annotated, Literal
+from hai.tool import tool
+
+
+@tool
+def search_docs(
+    query: Annotated[str, "要搜尋的文字"],
+    mode: Literal["fast", "deep"] = "fast",
+) -> str:
+    """搜尋專案文件。"""
+    return f"query={query}, mode={mode}"
+```
+
+docstring 會變成工具說明，`Annotated` 的字串會變成參數說明，模型靠這些決定什麼時候呼叫。參數說明也可以寫在 docstring 的 `Args:` 裡。
+
+沒有預設值的參數是必填。選填參數要給預設值，例如 `Optional[str] = None`。
+
+## 讓模型使用
+
+把工具放進 `tools`：
+
+```python
+context = {
+    "messages": [{"role": "user", "content": "幫我搜尋 Flow 文件"}],
+    "tools": [search_docs],
+}
+await llm.exec(context)
+print(context["assistant_message"])
+```
+
+模型要求呼叫工具時，hai 會自動執行並把結果交回模型，直到拿到最終回答。
+
+工具可以是 `async def`。會做網路請求或讀檔的工具建議寫成 async。
+
+## 限制呼叫次數
+
+自動模式不限次數。要設上限，用 `call_once()` 自己跑迴圈：
+
+```python
+from hai.tool import run_tool_calls
+
+messages = [{"role": "user", "content": "搜尋 Flow 的用法"}]
+for _ in range(5):
+    result = await llm.call_once(messages, tools=[search_docs])
+    if not result.tool_calls:
+        print(result.content)
+        break
+    messages.append({
+        "role": "assistant",
+        "content": result.content or None,
+        "tool_calls": result.tool_calls,
+    })
+    messages.extend(await run_tool_calls(result.tool_calls, [search_docs]))
+else:
+    raise RuntimeError("工具呼叫超過 5 次")
+```
+
+## 回傳 JSON
+
+工具的回傳值會轉成字串給模型。要回傳結構化資料，自己 `json.dumps()`：
+
+```python
+import json
+
+@tool
+def get_user(user_id: int) -> str:
+    """取得使用者資料。"""
+    return json.dumps({"id": user_id, "name": "Ivy"}, ensure_ascii=False)
+```
+
+## 回傳圖片
+
+```python
+from hai.tool import ImageResult
+
+@tool
+def screenshot() -> ImageResult:
+    """擷取目前畫面。"""
+    return ImageResult(data=png_bytes, media_type="image/png", description="目前畫面")
+```
+
+模型要支援圖片輸入才看得到。

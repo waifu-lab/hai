@@ -1,0 +1,42 @@
+---
+title: 快速開始
+---
+
+## 安裝
+
+```bash
+pip install hydrogen-ai
+```
+
+## 接上文字模型
+
+```python
+import asyncio
+import os
+
+from hai.core import Flow
+from hai.providers import create_text_provider
+
+
+async def main():
+    llm = create_text_provider(
+        "openai",
+        model="gpt-4o-mini",
+        api_key=os.environ["OPENAI_API_KEY"],
+    )
+    result = await Flow(llm).timeout(60).run({
+        "messages": [{"role": "user", "content": "請用一句話解釋向量檢索。"}]
+    })
+    print(result["assistant_message"])
+
+
+asyncio.run(main())
+```
+
+想用 Claude、Gemini 或本機的 Ollama，把第一個參數換掉就好，各家的設定見[模型供應商](/docs/providers)。
+
+## 下一步
+
+- [流程與節點](/docs/flow)：自訂節點、分支、錯誤處理
+- [Context 與 Document](/docs/context)：每個節點讀寫哪些欄位
+- [範例](/docs/examples/chatbot)：聊天機器人、工具助理、RAG、知識圖譜等完整程式

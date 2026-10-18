@@ -1,0 +1,131 @@
+---
+title: 總覽
+---
+
+| Provider                                 | 文字 | Embedding | 語音轉文字 | 文字轉語音 |
+| ---------------------------------------- | ---- | --------- | ---------- | ---------- |
+| [OpenAI](/docs/providers/openai)         | ✓    | ✓         | ✓          | ✓          |
+| [Anthropic](/docs/providers/anthropic)   | ✓    |           |            |            |
+| [Google](/docs/providers/google)         | ✓    | ✓         |            |            |
+| [Ollama](/docs/providers/ollama)         | ✓    |           |            |            |
+| [GPT-SoVITS](/docs/providers/gptsovits)  |      |           |            | ✓          |
+
+## 建立文字模型
+
+```python
+import os
+from hai.providers import create_text_provider
+
+llm = create_text_provider(
+    "openai",                      # openai / anthropic / google / ollama
+    model="gpt-4o-mini",
+    api_key=os.environ["OPENAI_API_KEY"],
+)
+```
+
+換 provider 只要改第一個參數和 `model`。也可以直接用各家的類別，例如 `OpenAIText`、`AnthropicText`，參數見各 provider 頁。
+
+## 問一個問題
+
+```python
+from hai.core import Flow
+
+result = await Flow(llm).timeout(60).run({
+    "messages": [
+        {"role": "system", "content": "請用繁體中文回答。"},
+        {"role": "user", "content": "什麼是向量檢索？"},
+    ]
+})
+print(result["assistant_message"])
+```
+
+## 多輪對話
+
+模型的回答要自己加回 `messages`，下一輪才記得：
+
+```python
+context = {"messages": [{"role": "user", "content": "我叫 Ivy"}]}
+await llm.exec(context)
+context["messages"].append({"role": "assistant", "content": context["assistant_message"]})
+
+context["messages"].append({"role": "user", "content": "我叫什麼名字？"})
+await llm.exec(context)
+```
+
+## 串流輸出
+
+```python
+llm.stream = True
+result = await llm.call_once(
+    [{"role": "user", "content": "簡短介紹節點流程。"}],
+    on_chunk=lambda text: print(text, end="", flush=True),
+)
+```
+
+要逐字顯示一定要用 `call_once()` 加 `on_chunk`。用 `exec()` 或 `Flow` 的話，會等全部收完才拿到結果。
+
+串流到一半斷線會拋 `StreamInterruptedError`，`e.partial_content` 是已經收到的文字。
+
+## 取得 JSON
+
+```python
+llm.response_format = {"type": "json_object"}
+context = {"messages": [{"role": "user", "content": '列出三種水果，格式 {"fruits": [...]}'}]}
+await llm.exec(context)
+print(context["parsed_response"])  # {"fruits": [...]}
+```
+
+解析失敗時 `parsed_response` 不會有值，`parse_error` 會有錯誤訊息。這個功能只在非串流的 `exec()` 有效。
+
+## 單次呼叫
+
+`call_once()` 只送一次請求，工具不會自動執行，拿到的是模型這一輪的原始結果：
+
+```python
+result = await llm.call_once(
+    messages=[{"role": "user", "content": "介紹這個專案"}],
+    system_prompt="請使用繁體中文回答。",
+)
+result.content        # 回答文字
+result.tool_calls     # 模型要求呼叫的工具
+result.usage          # {"input": ..., "output": ..., "total": ...}
+```
+
+要自己控制工具呼叫的流程時用這個，範例見[工具呼叫](/docs/tools#限制呼叫次數)。
+
+## 逾時與重試
+
+| 參數          | 預設   | 說明                                  |
+| ------------- | ------ | ------------------------------------- |
+| `timeout`     | `60.0` | 單次請求的秒數                        |
+| `max_retries` | `3`    | 遇到網路錯誤、429、5xx 時最多試幾次   |
+
+要限制整個流程（含重試、工具呼叫）的時間，用 `Flow(llm).timeout(秒數)`。
+
+## 接其他相容服務
+
+服務有 OpenAI 格式的 `/chat/completions`，就能用 `ProviderText`：
+
+```python
+from hai.providers import ProviderText
+
+llm = ProviderText(
+    name="my-service",
+    api_key=os.environ["MY_API_KEY"],
+    base_url="https://api.example.com/v1/chat/completions",
+    model="my-model",
+    temperature=0.7,
+)
+```
+
+`base_url` 要填完整網址，包含 `/chat/completions`。Embedding 和語音轉文字對應 `ProviderEmbedding`、`ProviderSTT`。
+
+## 列出可用模型
+
+```python
+from hai.providers import OpenAI
+
+models = await OpenAI(api_key=os.environ["OPENAI_API_KEY"]).models()
+```
+
+各家都有對應的類別：`OpenAI`、`Anthropic`、`Google`、`Ollama`。

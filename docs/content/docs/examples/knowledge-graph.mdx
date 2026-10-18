@@ -1,0 +1,122 @@
+---
+title: 建立知識圖譜
+---
+
+從文件中抽出人、公司、地點之間的關係，存進 Neo4j，再用 Cypher 查詢。
+
+## 準備
+
+```bash
+pip install hydrogen-ai hydrogen-ai-neo4j
+docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/your-password neo4j:5
+```
+
+## 程式
+
+```python
+import asyncio
+import os
+
+from hai.core import BaseNode, Document, Flow
+from hai.graphstores.neo4j import Neo4jStore
+from hai.processor import ChunkProcessor, FactExtractor, RecursiveSplitter
+from hai.providers import create_text_provider
+
+
+class SaveFacts(BaseNode):
+    def __init__(self, store):
+        super().__init__("save_facts")
+        self.store = store
+
+    async def exec(self, context):
+        for entity in context["extracted_entities"]:
+            await self.store.execute(
+                "MERGE (e:Entity {name: $name}) SET e.type = $type",
+                {"name": entity["name"], "type": entity.get("type", "")},
+            )
+        for fact in context["extracted_facts"]:
+            await self.store.execute(
+                "MERGE (s:Entity {name: $subject}) "
+                "MERGE (o:Entity {name: $object}) "
+                "MERGE (s)-[r:RELATED {predicate: $predicate}]->(o) "
+                "SET r.fact = $fact, r.source = $source",
+                fact,
+            )
+
+
+async def main():
+    llm = create_text_provider(
+        "openai", model="gpt-4o-mini", api_key=os.environ["OPENAI_API_KEY"]
+    )
+    llm.response_format = {"type": "json_object"}
+
+    store = Neo4jStore(password=os.environ["NEO4J_PASSWORD"])
+
+    chunker = ChunkProcessor(splitter=RecursiveSplitter(chunk_size=800, chunk_overlap=0))
+    extractor = FactExtractor(llm=llm, min_confidence=0.7)
+    chunker >> extractor >> SaveFacts(store)
+
+    documents = [
+        Document(
+            name="news.txt",
+            content=(
+                "Ivy 是 Acme 的工程師，在台北工作。"
+                "Acme 由 Leo 創立，總部在新竹。"
+                "Leo 也是 Nova 的投資人。"
+            ),
+            metadata={"source": "news.txt"},
+        )
+    ]
+
+    try:
+        await store.connect()
+        result = await Flow(chunker).timeout(300).run({"documents": documents})
+        print(f"存入 {result['entity_count']} 個實體、{result['fact_count']} 條關係")
+
+        rows = await store.query(
+            "MATCH (s:Entity)-[r:RELATED]->(o:Entity) "
+            "RETURN s.name AS subject, r.predicate AS predicate, o.name AS object"
+        )
+        for row in rows:
+            print(row["subject"], row["predicate"], row["object"])
+    finally:
+        await store.close()
+
+
+asyncio.run(main())
+```
+
+```text
+存入 6 個實體、5 條關係
+Ivy WORKS_AT Acme
+Ivy LOCATED_IN 台北
+Acme HEADQUARTERED_IN 新竹
+Leo FOUNDED Acme
+Leo INVESTED_IN Nova
+```
+
+## 查詢範例
+
+在 Neo4j Browser（`http://localhost:7474`）或用 `store.query()` 執行：
+
+```cypher
+// Leo 相關的所有關係
+MATCH (p:Entity {name: "Leo"})-[r:RELATED]-(other)
+RETURN p.name, r.predicate, other.name
+
+// 兩個人之間的關聯路徑
+MATCH path = shortestPath((a:Entity {name: "Ivy"})-[*..4]-(b:Entity {name: "Leo"}))
+RETURN path
+```
+
+## 從檔案讀取
+
+把 `Document` 換成 loader：
+
+```python
+from hai.loader import MarkdownLoader
+
+loader = MarkdownLoader(source="./articles", recursive=True)
+loader >> chunker >> extractor >> SaveFacts(store)
+result = await Flow(loader).timeout(600).run({})
+```

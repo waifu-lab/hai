@@ -1,4 +1,4 @@
-from typing import List
+from typing import Any, Dict, List
 
 from httpx import AsyncClient
 
@@ -19,15 +19,23 @@ class Google(ProviderInfo):
         )
 
     async def models(self) -> List[str]:
-        async with AsyncClient() as client:
-            response = await client.get(
-                f"{self.base_url}/models",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            res = response.json()
-            return [item["baseModelId"] for item in res.get("data", [])]
+        """Model ids without the ``models/`` prefix, e.g. ``gemini-2.5-flash``. Follows every result page."""
+        names: List[str] = []
+        params: Dict[str, Any] = {"pageSize": 1000}
+        async with AsyncClient(timeout=30.0) as client:
+            while True:
+                response = await client.get(
+                    f"{self.base_url}/models",
+                    headers={"x-goog-api-key": self.api_key},
+                    params=params,
+                )
+                response.raise_for_status()
+                res = response.json()
+                names.extend(item["name"].removeprefix("models/") for item in res.get("models", []))
+                page_token = res.get("nextPageToken")
+                if not page_token:
+                    return names
+                params["pageToken"] = page_token
 
 
 class GoogleText(ProviderText):

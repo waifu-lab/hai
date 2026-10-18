@@ -1,0 +1,66 @@
+---
+title: 實體與事實擷取
+---
+
+用文字模型從 chunks 裡抽出結構化資料。接在 `ChunkProcessor` 後面：
+
+```python
+from hai.processor import FactExtractor
+
+llm.response_format = {"type": "json_object"}
+extractor = FactExtractor(llm=llm)
+
+chunker >> extractor
+result = await Flow(chunker).run({"documents": docs})
+
+print(result["extracted_facts"])
+print(result["extracted_entities"])
+```
+
+設 `response_format` 讓模型一定回 JSON，不然容易解析失敗。
+
+## 三種擷取器
+
+| 節點                | 用途                         | 結果                                      |
+| ------------------- | ---------------------------- | ----------------------------------------- |
+| `FactExtractor`     | 抽出實體和它們之間的關係     | `extracted_facts`、`extracted_entities`   |
+| `EntityExtractor`   | 只抽實體，同名的會合併       | `extracted_entities`                      |
+| `MetadataExtractor` | 用自己的 prompt 抽任意結構   | `extracted_metadata`                      |
+
+## 事實的格式
+
+```json
+{
+  "subject": "Ivy",
+  "predicate": "WORKS_AT",
+  "object": "Acme",
+  "fact": "Ivy works at Acme.",
+  "confidence": 0.95,
+  "source": "./note.txt"
+}
+```
+
+`FactExtractor` 預設只保留 `confidence` 在 0.7 以上的事實，用 `min_confidence` 調整：
+
+```python
+FactExtractor(llm=llm, min_confidence=0.5)
+```
+
+## 自訂 prompt
+
+```python
+from hai.processor import MetadataExtractor
+
+extractor = MetadataExtractor(
+    llm=llm,
+    extraction_type="custom",
+    system_prompt='只回傳 JSON，格式為 {"summary": "...", "keywords": [...]}。',
+    user_prompt_template="請摘要這段內容：\n{content}",
+)
+```
+
+`{content}` 會換成 chunk 的內容。三種擷取器都能改 `system_prompt` 和 `user_prompt_template`。
+
+## 存進資料庫
+
+擷取結果不會自動存起來。要建成知識圖譜，見 [Neo4j](/docs/plugins/neo4j#從擷取結果建圖)。

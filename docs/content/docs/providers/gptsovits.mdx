@@ -1,0 +1,78 @@
+---
+title: GPT-SoVITS
+---
+
+用 [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) 模仿一段參考音訊的聲音來合成語音。
+
+## 啟動服務
+
+在 GPT-SoVITS 專案目錄執行：
+
+```bash
+python api_v2.py -a 127.0.0.1 -p 9880
+```
+
+## 合成語音
+
+```python
+from pathlib import Path
+from hai.providers import GPTSoVITSTTS
+
+tts = GPTSoVITSTTS(
+    ref_audio_path="/srv/gpt-sovits/ref/speaker.wav",
+    prompt_text="這是參考音訊裡說的話。",
+    prompt_lang="zh",
+    text_lang="zh",
+)
+
+audio = await tts.synthesize("今天天氣很好，我們出去走走吧。")
+Path("speech.wav").write_bytes(audio)
+```
+
+`ref_audio_path` 填的是 GPT-SoVITS 那台電腦上的路徑。服務在別台電腦時，參考音訊要放在那台。
+
+放進流程時，讀 `speech_text`、寫 `speech_audio`：
+
+```python
+context = {"speech_text": "歡迎使用 Hydrogen AI。"}
+await tts.exec(context)
+```
+
+## 參數
+
+| 參數                | 預設                    | 說明                         |
+| ------------------- | ----------------------- | ---------------------------- |
+| `base_url`          | `http://127.0.0.1:9880` | 服務網址                     |
+| `ref_audio_path`    |                         | 參考音訊路徑                 |
+| `prompt_text`       |                         | 參考音訊的逐字稿，填了效果較好 |
+| `prompt_lang`       | `zh`                    | 逐字稿的語言                 |
+| `text_lang`         | `zh`                    | 要合成的文字的語言           |
+| `speed_factor`      | `1.0`                   | 語速                         |
+| `text_split_method` | `cut5`                  | 長文字怎麼切，見下表         |
+
+| `text_split_method` | 切法           |
+| ------------------- | -------------- |
+| `cut1`              | 每 4 句一組    |
+| `cut2`              | 每 50 字一組   |
+| `cut3`              | 按中文句號     |
+| `cut4`              | 按英文句號     |
+| `cut5`              | 按所有標點     |
+
+## 邊合成邊播放
+
+```python
+async for chunk in tts.synthesize_stream("一段比較長的文字……"):
+    player.feed(chunk)
+```
+
+用 `streaming_mode` 調整速度和品質：`1` 品質最好，`3` 最快。
+
+## 切換聲音模型
+
+```python
+from hai.providers import GPTSoVITS
+
+server = GPTSoVITS(base_url="http://127.0.0.1:9880")
+await server.set_gpt_weights("GPT_weights_v2/speaker-e15.ckpt")
+await server.set_sovits_weights("SoVITS_weights_v2/speaker_e8.pth")
+```

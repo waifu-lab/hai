@@ -1,0 +1,83 @@
+---
+title: 向量儲存
+---
+
+向量資料庫要另外安裝 plugin：
+
+| Plugin                                | 適合                               |
+| ------------------------------------- | ---------------------------------- |
+| [Qdrant](/docs/plugins/qdrant)        | 記憶體、本機檔案或遠端 Qdrant 服務 |
+| [sqlite-vec](/docs/plugins/sqlitevec) | 單一 SQLite 檔案，不用另外跑服務   |
+
+下面的用法兩者相同，範例以 sqlite-vec 為例。
+
+## 寫入與檢索
+
+```python
+from hai.vectorstores import VectorStoreWriter, VectorStoreRetriever
+from hai.vectorstores.sqlitevec import SqliteVecStore
+
+store = SqliteVecStore(path="knowledge.db")
+
+writer = VectorStoreWriter(store=store)        # 讀 embedded_chunks
+retriever = VectorStoreRetriever(store=store, top_k=5)  # 讀 query_embedding
+
+# 導入
+chunker >> embed_chunks >> writer
+
+# 查詢
+query_embedder >> retriever
+```
+
+檢索結果在 `context["retrieved_documents"]`，每筆有 `id`、`score`、`content`、`name`、`payload`（其他 metadata）。
+
+完整範例見 [RAG 範例](/docs/examples/rag)。
+
+## 直接操作 store
+
+```python
+await store.write([{
+    "id": "intro-0",
+    "content": "Hydrogen AI uses a shared context.",
+    "name": "intro.txt",
+    "embedding": [0.1, 0.2, 0.3],
+    "category": "guide",
+}])
+
+results = await store.query([0.1, 0.2, 0.3], top_k=5)
+record = await store.get("intro-0")
+await store.delete("intro-0")
+await store.delete_collection()
+```
+
+除了 `id`、`content`、`name`、`embedding`，其他欄位都會存成 metadata。
+
+## 避免重複資料
+
+沒給 `id` 的資料，每次寫入都會新增一筆。要能重複導入同一批文件，在 writer 前面幫每個 chunk 產生固定的 id：
+
+```python
+from hai.core import BaseNode
+
+
+class AssignIds(BaseNode):
+    async def exec(self, context):
+        for chunk in context["embedded_chunks"]:
+            chunk["id"] = f"{chunk['name']}-{chunk['chunk_index']}"
+
+
+chunker >> embed_chunks >> AssignIds("ids") >> writer
+```
+
+同一個 id 再寫一次會覆蓋舊資料。
+
+## 關閉
+
+用完要關閉：
+
+```python
+try:
+    await Flow(chunker).run(context)
+finally:
+    await store.close()
+```

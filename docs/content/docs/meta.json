@@ -1,0 +1,27 @@
+{
+  "title": "Hydrogen AI",
+  "pages": [
+    "index",
+    "---開始使用---",
+    "quick-start",
+    "---核心概念---",
+    "flow",
+    "context",
+    "---功能指南---",
+    "providers",
+    "tools",
+    "loaders",
+    "processing",
+    "embeddings",
+    "vectorstores",
+    "extraction",
+    "graphstores",
+    "speech",
+    "---Plugins---",
+    "plugins",
+    "---範例---",
+    "examples",
+    "---維護---",
+    "development"
+  ]
+}

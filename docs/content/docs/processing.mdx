@@ -1,0 +1,74 @@
+---
+title: 清理與切塊
+---
+
+## 切塊
+
+把 `documents` 切成 `chunks`：
+
+```python
+from hai.core import Document, Flow
+from hai.processor import ChunkProcessor, RecursiveSplitter
+
+chunker = ChunkProcessor(
+    splitter=RecursiveSplitter(chunk_size=500, chunk_overlap=50)
+)
+result = await Flow(chunker).run({
+    "documents": [Document(content="第一段。\n\n第二段。", name="note.md")]
+})
+print(result["chunks"])
+```
+
+通常接在 loader 後面：
+
+```python
+loader >> chunker
+```
+
+## 選 splitter
+
+| 類別                | 適合                                     |
+| ------------------- | ---------------------------------------- |
+| `RecursiveSplitter` | 大部分情況，會先照段落切，太長再照句子切 |
+| `Splitter`          | 只想用一個固定分隔符切，例如每行一塊     |
+
+```python
+from hai.processor import Splitter, RecursiveSplitter
+
+Splitter(chunk_size=500, chunk_overlap=50, separator="\n")
+
+RecursiveSplitter(
+    chunk_size=500,
+    chunk_overlap=50,
+    separators=["\n\n", "\n", "。", "！", "？", " ", ""],
+)
+```
+
+| 參數            | 預設   | 說明                     |
+| --------------- | ------ | ------------------------ |
+| `chunk_size`    | `1000` | 每塊的長度上限（字元數） |
+| `chunk_overlap` | `200`  | 相鄰兩塊重疊的字元數     |
+
+`chunk_size` 算的是字元數，不是 token。中文文件可以設小一點。
+
+自訂 `separators` 時，最後放一個 `""`，沒有分隔符可用時才能逐字切。
+
+## 清理亂碼
+
+```python
+from hai.preprocessor import Cleaner
+
+context = {"text": "FranÃ§ais"}
+await Cleaner().exec(context)
+print(context["text"])  # Français
+```
+
+`Cleaner` 處理的是 `context["text"]`。要清理整批文件，逐份處理：
+
+```python
+cleaner = Cleaner()
+for doc in documents:
+    item = {"text": doc.content}
+    await cleaner.exec(item)
+    doc.content = item["text"]
+```

@@ -1,0 +1,94 @@
+---
+title: 依問題分流
+---
+
+客服常見的需求：先判斷問題類型，再交給不同的提示詞處理。
+
+- `billing`（付款、退款）→ 帳務提示詞 → 模型回答
+- `tech`（登入、錯誤）→ 技術提示詞 → 模型回答
+- 其他 → 一般提示詞 → 模型回答
+
+```python
+import asyncio
+import os
+
+from hai.core import BaseNode, Flow
+from hai.providers import create_text_provider
+
+
+class Classify(BaseNode):
+    """讓模型判斷問題類型，回傳的字串決定走哪個分支。"""
+
+    def __init__(self, llm):
+        super().__init__("classify")
+        self.llm = llm
+
+    async def exec(self, context):
+        result = await self.llm.call_once(
+            [{"role": "user", "content": context["question"]}],
+            system_prompt=(
+                "判斷客服問題的類型，只回答一個英文單字：\n"
+                "billing：付款、發票、退款\n"
+                "tech：登入、錯誤、操作問題\n"
+                "other：其他"
+            ),
+        )
+        label = result.content.strip().lower()
+        context["category"] = label
+        return label
+
+
+class Prompt(BaseNode):
+    """依分類放上對應的提示詞。"""
+
+    def __init__(self, name, system_prompt):
+        super().__init__(name)
+        self.system_prompt = system_prompt
+
+    async def exec(self, context):
+        context["messages"] = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": context["question"]},
+        ]
+
+
+async def main():
+    llm = create_text_provider(
+        "openai", model="gpt-4o-mini", api_key=os.environ["OPENAI_API_KEY"]
+    )
+
+    classify = Classify(llm)
+    billing = Prompt("billing", "你是帳務客服。回答時附上退款申請連結 https://example.com/refund。")
+    tech = Prompt("tech", "你是技術客服。先請使用者提供錯誤畫面，再給排查步驟。")
+    general = Prompt("general", "你是一般客服，用親切的語氣回答。")
+
+    classify >> {"billing": billing, "tech": tech}
+    classify >> general          # 分類不是 billing、tech 時走這裡
+    billing >> llm
+    tech >> llm
+    general >> llm
+
+    for question in ["我上個月被重複扣款了", "App 一直登入失敗", "你們週末有營業嗎？"]:
+        result = await Flow(classify).timeout(60).run({"question": question})
+        print(f"[{result['category']}] {question}")
+        print(result["assistant_message"], "\n")
+
+
+asyncio.run(main())
+```
+
+`Classify` 回傳的字串如果是 `billing` 或 `tech`，就走對應的分支，其他值走 `>>` 接的 `general`。
+
+## 加上人工審核
+
+分支也可以接到不同的後續處理，例如退款問題一律轉給真人：
+
+```python
+class Escalate(BaseNode):
+    async def exec(self, context):
+        context["assistant_message"] = "已為你轉接專人，請稍候。"
+        await notify_staff(context["question"])
+
+
+classify >> {"billing": Escalate("escalate"), "tech": tech}
+```

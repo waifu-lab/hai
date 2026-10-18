@@ -1,0 +1,71 @@
+---
+title: Ollama
+---
+
+用 [Ollama](https://ollama.com/) 在自己的電腦上跑開源模型，不需要 API key。
+
+## 準備
+
+安裝 Ollama 後，下載模型：
+
+```bash
+ollama pull gemma3
+```
+
+## 文字
+
+```python
+from hai.core import Flow
+from hai.providers import OllamaText
+
+llm = OllamaText(model="gemma3", timeout=180)
+
+result = await Flow(llm).run({
+    "messages": [{"role": "user", "content": "介紹一下你自己。"}]
+})
+print(result["assistant_message"])
+```
+
+| 參數          | 預設                                         | 說明                        |
+| ------------- | -------------------------------------------- | --------------------------- |
+| `model`       | `gemma3`                                     | 要先 `ollama pull`          |
+| `base_url`    | `http://localhost:11434/v1/chat/completions` | Ollama 的網址               |
+| `temperature` | `0.7`                                        |                             |
+| `max_tokens`  | `1500`                                       |                             |
+| `timeout`     | `60.0`                                       | 本機模型較慢，建議調高      |
+
+模型第一次載入比較久，`timeout` 建議設長一點。
+
+要用工具呼叫，模型本身要支援，例如 `qwen3`、`llama3.1`。
+
+## 連到其他電腦
+
+```python
+llm = OllamaText(
+    model="qwen3",
+    base_url="http://192.168.1.20:11434/v1/chat/completions",
+)
+```
+
+## 列出已下載的模型
+
+```python
+from hai.providers import Ollama
+
+print(await Ollama().models())
+```
+
+## Embedding
+
+```python
+from hai.providers import ProviderEmbedding
+
+embedder = ProviderEmbedding(
+    name="ollama-embedding",
+    api_key="ollama",
+    base_url="http://localhost:11434/v1/embeddings",
+    model="nomic-embed-text",
+)
+```
+
+模型一樣要先 `ollama pull nomic-embed-text`。
