@@ -23,7 +23,7 @@ import asyncio
 import sys
 
 from hai.core import BaseNode, Flow
-from hai.embedders.openai.openai import EmbeddingProcessor, QueryEmbedder
+from hai.embedders import EmbeddingProcessor, QueryEmbedder
 from hai.loader import MarkdownLoader
 from hai.processor import ChunkProcessor, RecursiveSplitter
 from hai.providers import OllamaText, ProviderEmbedding
@@ -64,7 +64,7 @@ async def ingest(store):
     embed = EmbeddingProcessor(embedder=embedder, batch_size=16)
     loader >> chunker >> embed >> AssignIds("ids") >> VectorStoreWriter(store=store)
 
-    result = await Flow(loader).run({})
+    result = await Flow(loader).run()
     print(f"導入 {result['document_count']} 份文件，{result['stored_count']} 個段落")
 
 

@@ -11,7 +11,7 @@ from hai.loader import TextLoader
 loader = TextLoader(source="./data", recursive=True)
 
 documents = await loader.load()       # 直接拿 Document 列表
-result = await Flow(loader).run({})   # 或放進流程，結果在 result["documents"]
+result = await Flow(loader).run()   # 或放進流程，結果在 result["documents"]
 ```
 
 檔案類 loader 共用的參數：

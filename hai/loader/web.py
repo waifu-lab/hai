@@ -7,6 +7,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 from hai.core import Document
+
 from .base import BaseLoader
 
 
@@ -15,19 +16,23 @@ class HTMLTextExtractor(HTMLParser):
         super().__init__()
         self.text_parts = []
         self.skip_tags = {"script", "style", "noscript", "iframe"}
-        self.current_tag = None
+        # Depth inside skipped tags, so text after </script> is kept again
+        self.skip_depth = 0
 
     def handle_starttag(self, tag, _attrs):
-        self.current_tag = tag
+        if tag in self.skip_tags:
+            self.skip_depth += 1
         if tag in {"p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6", "li"}:
             self.text_parts.append("\n")
 
     def handle_endtag(self, tag):
+        if tag in self.skip_tags and self.skip_depth:
+            self.skip_depth -= 1
         if tag in {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6"}:
             self.text_parts.append("\n")
 
     def handle_data(self, data):
-        if self.current_tag not in self.skip_tags:
+        if not self.skip_depth:
             text = data.strip()
             if text:
                 self.text_parts.append(text + " ")
@@ -81,7 +86,7 @@ class WebLoader(BaseLoader):
         super().__init__(name, strict=strict)
         self.urls = urls if isinstance(urls, list) else [urls]
         self.timeout = timeout
-        self.headers = headers or {"User-Agent": "hai-web-loader/0.1.0 (Python httpx)"}
+        self.headers = headers or {"User-Agent": "hai-web-loader (Python httpx)"}
         self.extract_links = extract_links
         self.max_retries = max_retries
 

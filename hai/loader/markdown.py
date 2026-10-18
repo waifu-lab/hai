@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from hai.core import Document
+
 from .text import TextLoader
 
 
@@ -174,7 +175,7 @@ class MarkdownLoader(TextLoader):
                 result[key.strip()] = value.strip().strip('"').strip("'")
         return result
 
-    def _extract_metadata(self, content: str) -> Dict[str, Any]:
+    def _extract_metadata(self, content: str) -> Dict[str, Any]:  # noqa: C901
         """Extract structured metadata from markdown content."""
         metadata: Dict[str, Any] = {}
 

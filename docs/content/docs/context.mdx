@@ -13,23 +13,23 @@ result["chunks"]
 
 串接節點時，後一個節點要讀的欄位，前一個要寫出來。內建節點用的欄位：
 
-| 節點                             | 讀取                          | 寫入                                                                  |
-| -------------------------------- | ----------------------------- | --------------------------------------------------------------------- |
-| Loader                           |                               | `documents`、`document_count`                                         |
-| `Cleaner`                        | `text`                        | `text`                                                                |
-| `Splitter` / `RecursiveSplitter` | `text`                        | `text_chunks`、`chunk_count`                                          |
-| `ChunkProcessor`                 | `documents`                   | `chunks`、`total_chunks`                                              |
-| `ProviderEmbedding`              | `input`                       | `embeddings`                                                          |
-| `EmbeddingProcessor`             | `chunks`                      | `embedded_chunks`                                                     |
-| `VectorStoreWriter`              | `embedded_chunks`             | `stored_ids`、`stored_count`                                          |
-| `QueryEmbedder`                  | `query`                       | `query_embedding`                                                     |
-| `VectorStoreRetriever`           | `query_embedding`             | `retrieved_documents`、`retrieved_count`                              |
-| 文字模型                         | `messages`、`tools`           | `assistant_message`、`messages`                                       |
-| `MetadataExtractor`              | `chunks`                      | `extracted_metadata`、`metadata_count`                                |
-| `FactExtractor`                  | `chunks`                      | `extracted_facts`、`extracted_entities`、`fact_count`、`entity_count` |
-| `EntityExtractor`                | `chunks`                      | `extracted_entities`、`entity_count`                                  |
-| STT                              | `audio`、`format`、`language` | `transcript`                                                          |
-| TTS                              | `speech_text`                 | `speech_audio`                                                        |
+| 節點                             | 讀取                            | 寫入                                                                  |
+| -------------------------------- | ------------------------------- | --------------------------------------------------------------------- |
+| Loader                           |                                 | `documents`、`document_count`                                         |
+| `Cleaner`                        | `text`、`documents`             | `text`、每個 document 的 `content`                                    |
+| `Splitter` / `RecursiveSplitter` | `text`                          | `text_chunks`、`chunk_count`                                          |
+| `ChunkProcessor`                 | `documents`                     | `chunks`、`total_chunks`                                              |
+| `ProviderEmbedding`              | `input`                         | `embeddings`                                                          |
+| `EmbeddingProcessor`             | `chunks`                        | `embedded_chunks`                                                     |
+| `VectorStoreWriter`              | `embedded_chunks`               | `stored_ids`、`stored_count`                                          |
+| `QueryEmbedder`                  | `query`                         | `query_embedding`                                                     |
+| `VectorStoreRetriever`           | `query_embedding`               | `retrieved_documents`、`retrieved_count`                              |
+| 文字模型                         | `messages`、`tools`、`on_chunk` | `assistant_message`、`messages`                                       |
+| `MetadataExtractor`              | `chunks`                        | `extracted_metadata`、`metadata_count`                                |
+| `FactExtractor`                  | `chunks`                        | `extracted_facts`、`extracted_entities`、`fact_count`、`entity_count` |
+| `EntityExtractor`                | `chunks`                        | `extracted_entities`、`entity_count`                                  |
+| STT                              | `audio`、`format`、`language`   | `transcript`                                                          |
+| TTS                              | `speech_text`                   | `speech_audio`                                                        |
 
 欄位對不上時（例如檢索結果要交給文字模型），中間加一個節點轉換：
 

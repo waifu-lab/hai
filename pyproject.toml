@@ -13,7 +13,7 @@ target-version = "py39"
 [project]
 name = "hydrogen-ai"
 version = "0.2.0"
-description = ""
+description = "Lightweight async node/flow toolkit for LLM pipelines: providers, tools, loaders, RAG and knowledge graphs."
 authors = [
     {name = "phillychi3",email = "phillychi3@gmail.com"}
 ]
@@ -30,6 +30,13 @@ dependencies = [
 
 [tool.poetry]
 packages = [{include = "hai"}]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0"
+ruff = ">=0.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

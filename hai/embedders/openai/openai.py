@@ -36,12 +36,16 @@ class EmbeddingProcessor(BaseNode):
             embed_context = {"input": batch}
             await self.embedder.exec(embed_context)
             batch_embeddings = embed_context.get("embeddings", [])
+            if len(batch_embeddings) != len(batch):
+                raise ValueError(
+                    f"{self.name}: embedder returned {len(batch_embeddings)} embeddings for {len(batch)} texts"
+                )
             all_embeddings.extend(batch_embeddings)
 
-        for i, chunk in enumerate(chunks):
-            chunk["embedding"] = all_embeddings[i]
-
-        context["embedded_chunks"] = chunks
+        # New dicts, so the caller's ``chunks`` are left without an ``embedding`` field
+        context["embedded_chunks"] = [
+            {**chunk, "embedding": embedding} for chunk, embedding in zip(chunks, all_embeddings)
+        ]
 
         return context
 

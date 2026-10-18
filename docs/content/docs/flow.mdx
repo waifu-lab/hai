@@ -35,10 +35,12 @@ asyncio.run(main())
 
 ```python
 first >> second >> third
-await Flow(first).run({})
+await Flow(first).run()
 ```
 
-`Flow` 要傳第一個節點。不要寫成 `Flow(first >> second >> third)`，那樣會從 `third` 開始跑。
+`run()` 不傳參數時從空的 context 開始；要預先放資料就傳 dict，例如 `run({"query": "..."})`，跑完回傳的就是同一個 dict。
+
+`Flow` 要傳第一個節點。`first >> second >> third` 的回傳值是 `third`，所以寫成 `Flow(first >> second >> third)` 只會跑 `third`，這時會發出 `UserWarning` 提醒。
 
 ## 分支
 
@@ -55,10 +57,12 @@ review >> {"approved": publish, "revise": rewrite}
 
 也可以回傳 `{"next": "revise"}`。回傳的名稱找不到對應分支時，走 `>>` 接的預設節點，沒有就結束。
 
+回傳 `context` 本身不算分支選擇，所以 context 裡就算有叫 `next` 的欄位，也不會影響路線。
+
 ## 逾時
 
 ```python
-await Flow(first).timeout(30).run({})
+await Flow(first).timeout(30).run()
 ```
 
 整條流程超過 30 秒就中斷。
@@ -70,7 +74,7 @@ def handle_error(node, exc):
     print(f"{node.name} 失敗：{exc}")
     return False  # False：跳過這個節點繼續；True：中斷並拋出
 
-await Flow(first).on_error(handle_error).run({})
+await Flow(first).on_error(handle_error).run()
 ```
 
 只想處理單一節點的錯誤，在節點裡覆寫 `exec_fallback`：

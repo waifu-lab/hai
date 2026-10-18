@@ -2,7 +2,9 @@ from typing import Any, AsyncIterator, Dict, Literal, Optional, Tuple
 
 from httpx import AsyncClient
 
-from .providers import ProviderEmbedding, ProviderInfo, ProviderSTT, ProviderText, ProviderTTS
+from .providers import ProviderEmbedding, ProviderInfo, ProviderSTT, ProviderText, ProviderTTS, resolve_api_key
+
+_API_KEY_ENV = ("OPENAI_API_KEY",)
 
 _DEFAULT_TEMPERATURE = 0.7
 _DEFAULT_MAX_TOKENS = 1500
@@ -12,12 +14,12 @@ class OpenAI(ProviderInfo):
     def __init__(
         self,
         name: str = "OpenAI",
-        api_key: str = "your_openai_api_key",
+        api_key: Optional[str] = None,
         base_url: str = "https://api.openai.com/v1",
     ):
         super().__init__(
             name=name,
-            api_key=api_key,
+            api_key=resolve_api_key(api_key, _API_KEY_ENV, "OpenAI"),
             base_url=base_url,
         )
 
@@ -41,13 +43,15 @@ class OpenAIText(ProviderText):
     def __init__(
         self,
         name: str = "OpenAI",
-        api_key: str = "your_openai_api_key",
+        api_key: Optional[str] = None,
         model: str = "gpt-4o-mini",
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stream: bool = False,
         max_retries: int = 3,
         timeout: float = 60.0,
+        max_tool_rounds: int = 10,
+        base_url: str = "https://api.openai.com/v1/chat/completions",
         reasoning_effort: Optional[Literal["low", "medium", "high"]] = None,
         extra_params: Optional[Dict[str, Any]] = None,
     ):
@@ -59,14 +63,15 @@ class OpenAIText(ProviderText):
 
         super().__init__(
             name=name,
-            api_key=api_key,
+            api_key=resolve_api_key(api_key, _API_KEY_ENV, "OpenAI"),
             model=model,
-            base_url="https://api.openai.com/v1/chat/completions",
+            base_url=base_url,
             temperature=temperature,
             max_tokens=max_tokens,
             stream=stream,
             max_retries=max_retries,
             timeout=timeout,
+            max_tool_rounds=max_tool_rounds,
         )
         self.reasoning_effort = reasoning_effort
         self.extra_params = extra_params or {}
@@ -83,14 +88,19 @@ class OpenAIEmbedding(ProviderEmbedding):
     def __init__(
         self,
         name: str = "OpenAIEmbedding",
-        api_key: str = "your_openai_api_key",
+        api_key: Optional[str] = None,
         model: str = "text-embedding-3-small",
+        base_url: str = "https://api.openai.com/v1/embeddings",
+        max_retries: int = 3,
+        timeout: float = 30.0,
     ):
         super().__init__(
             name=name,
-            api_key=api_key,
+            api_key=resolve_api_key(api_key, _API_KEY_ENV, "OpenAI"),
             model=model,
-            base_url="https://api.openai.com/v1/embeddings",
+            base_url=base_url,
+            max_retries=max_retries,
+            timeout=timeout,
         )
 
 
@@ -98,16 +108,17 @@ class OpenAISTT(ProviderSTT):
     def __init__(
         self,
         name: str = "OpenAISTT",
-        api_key: str = "your_openai_api_key",
+        api_key: Optional[str] = None,
         model: str = "whisper-1",
         language: Optional[str] = None,
         temperature: float = 0.0,
         timeout: float = 60.0,
+        base_url: str = "https://api.openai.com/v1/audio/transcriptions",
     ):
         super().__init__(
             name=name,
-            api_key=api_key,
-            base_url="https://api.openai.com/v1/audio/transcriptions",
+            api_key=resolve_api_key(api_key, _API_KEY_ENV, "OpenAI"),
+            base_url=base_url,
             model=model,
             language=language,
             temperature=temperature,
@@ -121,7 +132,7 @@ class OpenAITTS(ProviderTTS):
     def __init__(
         self,
         name: str = "OpenAITTS",
-        api_key: str = "your_openai_api_key",
+        api_key: Optional[str] = None,
         model: str = "tts-1",
         voice: str = "nova",
         response_format: str = "mp3",
@@ -130,7 +141,7 @@ class OpenAITTS(ProviderTTS):
         base_url: str = "https://api.openai.com/v1/audio/speech",
     ):
         super().__init__(name=name, base_url=base_url, timeout=timeout)
-        self.api_key = api_key
+        self.api_key = resolve_api_key(api_key, _API_KEY_ENV, "OpenAI")
         self.model = model
         self.voice = voice
         self.response_format = response_format

@@ -5,7 +5,7 @@ class Ollama(ProviderInfo):
     def __init__(
         self,
         name: str = "Ollama",
-        api_key: str = "your_ollama_api_key",
+        api_key: str = "ollama",
         base_url: str = "http://localhost:11434/v1",
     ):
         super().__init__(
@@ -27,6 +27,7 @@ class OllamaText(ProviderText):
         stream: bool = False,
         max_retries: int = 3,
         timeout: float = 60.0,
+        max_tool_rounds: int = 10,
     ):
         """
         Args:
@@ -43,4 +44,5 @@ class OllamaText(ProviderText):
             stream=stream,
             max_retries=max_retries,
             timeout=timeout,
+            max_tool_rounds=max_tool_rounds,
         )

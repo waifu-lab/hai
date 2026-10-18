@@ -98,10 +98,7 @@ class RecursiveSplitter(BaseNode):
         if separator:
             if self.keep_separator:
                 splits = re.split(f"({re.escape(separator)})", text)
-                splits = [
-                    splits[i] + (splits[i + 1] if i + 1 < len(splits) else "")
-                    for i in range(0, len(splits), 2)
-                ]
+                splits = [splits[i] + (splits[i + 1] if i + 1 < len(splits) else "") for i in range(0, len(splits), 2)]
             else:
                 splits = text.split(separator)
             return [s for s in splits if s]

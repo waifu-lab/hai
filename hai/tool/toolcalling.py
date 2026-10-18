@@ -51,7 +51,7 @@ class ImageResult:
         return f"data:{self.media_type};base64,{base64.b64encode(self.data).decode('ascii')}"
 
 
-def _type_to_schema(tp: Any) -> Dict[str, Any]:
+def _type_to_schema(tp: Any) -> Dict[str, Any]:  # noqa: C901
     """Map a Python type hint to a JSON Schema fragment. Unknown types map to ``{}`` (any)."""
     origin = get_origin(tp)
     args = get_args(tp)

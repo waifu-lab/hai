@@ -24,7 +24,7 @@ import asyncio
 import os
 
 from hai.core import BaseNode, Document, Flow
-from hai.embedders.openai.openai import EmbeddingProcessor, QueryEmbedder
+from hai.embedders import EmbeddingProcessor, QueryEmbedder
 from hai.processor import ChunkProcessor, Splitter
 from hai.providers import OpenAIEmbedding, create_text_provider
 from hai.vectorstores import VectorStoreRetriever, VectorStoreWriter
@@ -117,7 +117,7 @@ from hai.loader import MarkdownLoader
 
 loader = MarkdownLoader(source="./knowledge", recursive=True, strict=True)
 loader >> chunker
-ingested = await Flow(loader).timeout(120).run({})
+ingested = await Flow(loader).timeout(120).run()
 ```
 
 ## 改用 Qdrant

@@ -6,7 +6,7 @@ title: 向量化
 
 ```python
 import os
-from hai.embedders.openai.openai import EmbeddingProcessor
+from hai.embedders import EmbeddingProcessor
 from hai.providers import OpenAIEmbedding
 
 embedder = OpenAIEmbedding(api_key=os.environ["OPENAI_API_KEY"])
@@ -28,7 +28,7 @@ chunker >> processor >> writer
 ## 向量化查詢
 
 ```python
-from hai.embedders.openai.openai import QueryEmbedder
+from hai.embedders import QueryEmbedder
 
 query_embedder = QueryEmbedder(embedder=embedder)
 context = {"query": "如何建立流程？"}

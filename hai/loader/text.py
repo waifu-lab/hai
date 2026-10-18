@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 import aiofiles
+import aiofiles.os
 
 from hai.core import Document
 
@@ -60,7 +61,7 @@ class TextLoader(BaseLoader):
         metadata = {
             "source": str(file_path),
             "encoding": encoding,
-            "size": file_path.stat().st_size,
+            "size": (await aiofiles.os.stat(file_path)).st_size,
             "extension": file_path.suffix,
         }
 

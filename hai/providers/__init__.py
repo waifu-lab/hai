@@ -18,7 +18,9 @@ from hai.providers.providers import (
     ProviderText,
     ProviderTTS,
     StreamInterruptedError,
+    ToolLoopLimitError,
     TurnResult,
+    resolve_api_key,
 )
 
 PROVIDERS = ["openai", "anthropic", "google", "ollama", "gptsovits"]
@@ -104,6 +106,8 @@ __all__ = [
     "ProviderEmbedding",
     "TurnResult",
     "StreamInterruptedError",
+    "ToolLoopLimitError",
+    "resolve_api_key",
     "OpenAI",
     "OpenAIText",
     "OpenAIEmbedding",

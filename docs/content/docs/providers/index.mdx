@@ -25,6 +25,20 @@ llm = create_text_provider(
 
 換 provider 只要改第一個參數和 `model`。也可以直接用各家的類別，例如 `OpenAIText`、`AnthropicText`，參數見各 provider 頁。
 
+沒傳 `api_key` 時會讀環境變數，都沒有就直接拋出 `ValueError` 並說明要設哪個變數：
+
+| Provider  | 環境變數                            |
+| --------- | ----------------------------------- |
+| OpenAI    | `OPENAI_API_KEY`                    |
+| Anthropic | `ANTHROPIC_API_KEY`                 |
+| Google    | `GEMINI_API_KEY`，其次 `GOOGLE_API_KEY` |
+
+`OpenAIText`、`AnthropicText`、`GoogleText` 和各家 Embedding 都可以傳 `base_url`，接 proxy 或其他相容服務（要填完整網址，含 `/chat/completions`）：
+
+```python
+llm = OpenAIText(model="gpt-4o-mini", base_url="https://my-proxy.example/v1/chat/completions")
+```
+
 ## 問一個問題
 
 ```python
@@ -62,7 +76,15 @@ result = await llm.call_once(
 )
 ```
 
-要逐字顯示一定要用 `call_once()` 加 `on_chunk`。用 `exec()` 或 `Flow` 的話，會等全部收完才拿到結果。
+在 `exec()` 或 `Flow` 裡，把 callback 放進 context 的 `on_chunk`，一樣能逐字顯示，工具呼叫也會照常自動執行：
+
+```python
+llm.stream = True
+await Flow(llm).run({
+    "messages": [{"role": "user", "content": "簡短介紹節點流程。"}],
+    "on_chunk": lambda text: print(text, end="", flush=True),
+})
+```
 
 串流到一半斷線會拋 `StreamInterruptedError`，`e.partial_content` 是已經收到的文字。
 
@@ -99,6 +121,7 @@ result.usage          # {"input": ..., "output": ..., "total": ...}
 | ------------- | ------ | ------------------------------------- |
 | `timeout`     | `60.0` | 單次請求的秒數                        |
 | `max_retries` | `3`    | 遇到網路錯誤、429、5xx 時最多試幾次   |
+| `max_tool_rounds` | `10` | 自動執行工具最多幾輪，超過拋 `ToolLoopLimitError` |
 
 要限制整個流程（含重試、工具呼叫）的時間，用 `Flow(llm).timeout(秒數)`。
 

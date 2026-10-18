@@ -3,10 +3,11 @@ import email.utils
 import inspect
 import json
 import logging
+import os
 import time
 import warnings
 from abc import abstractmethod
-from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Union
 
 import httpx
 from httpx import AsyncClient
@@ -66,6 +67,59 @@ def _retry_delay(attempt: int, exc: Exception) -> float:
     return float(2**attempt)
 
 
+def resolve_api_key(api_key: Optional[str], env_vars: Sequence[str], provider: str) -> str:
+    """Return *api_key*, or the first of *env_vars* that is set, raising a clear error when neither is."""
+    if api_key:
+        return api_key
+    for var in env_vars:
+        value = os.environ.get(var)
+        if value:
+            return value
+    raise ValueError(
+        f"No API key for {provider}. Pass api_key=... or set the {' or '.join(env_vars)} environment variable."
+    )
+
+
+async def _post_json_with_retry(
+    client: AsyncClient,
+    url: str,
+    headers: Dict[str, str],
+    payload: Dict[str, Any],
+    max_retries: int,
+) -> Any:
+    """POST *payload* and return the JSON body, with exponential backoff on network errors, 429 and 5xx."""
+    attempts = max(1, max_retries)
+    for attempt in range(attempts):
+        try:
+            response = await client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            return response.json()
+        except _TRANSPORT_ERRORS as e:
+            if not _is_retryable(e) or attempt == attempts - 1:
+                raise
+            await asyncio.sleep(_retry_delay(attempt, e))
+    raise AssertionError("unreachable")
+
+
+class ToolLoopLimitError(RuntimeError):
+    """The model kept requesting tool calls past ``max_tool_rounds``."""
+
+
+def _tool_calls_from_buffer(tool_calls_buffer: Dict[int, Dict[str, str]]) -> List[Dict[str, Any]]:
+    """Turn streamed tool-call fragments into OpenAI-format tool calls, in index order."""
+    return [
+        {
+            "id": tool_calls_buffer[i]["id"],
+            "type": "function",
+            "function": {
+                "name": tool_calls_buffer[i]["name"],
+                "arguments": tool_calls_buffer[i]["arguments"],
+            },
+        }
+        for i in sorted(tool_calls_buffer)
+    ]
+
+
 class TurnResult(BaseModel):
     """Single-turn LLM response. Tool calls are in OpenAI format (not executed)."""
 
@@ -110,8 +164,12 @@ class ProviderText(BaseNode):
     until the model returns a final answer. Use :meth:`call_once` to drive the
     loop yourself.
 
+    The tool loop stops with :class:`ToolLoopLimitError` after ``max_tool_rounds``
+    rounds of tool calls, so a model that never stops calling tools cannot run forever.
+
     Context:
-        reads: ``messages`` (List[dict]), ``tools`` (List[Tool], optional)
+        reads: ``messages`` (List[dict]), ``tools`` (List[Tool], optional),
+            ``on_chunk`` (callable, optional; receives each text chunk when ``stream=True``)
         writes: ``messages`` (conversation including tool-call turns),
             ``assistant_message`` (str), ``openai_response`` (raw response, non-stream),
             ``parsed_response`` / ``parse_error`` (when ``response_format`` is ``json_object``)
@@ -132,6 +190,7 @@ class ProviderText(BaseNode):
         response_format: Optional[Dict[str, Any]] = None,
         max_retries: int = 3,
         timeout: float = 60.0,
+        max_tool_rounds: int = 10,
     ):
         super().__init__(name)
         self.api_key = api_key
@@ -143,6 +202,7 @@ class ProviderText(BaseNode):
         self.response_format = response_format
         self.max_retries = max_retries
         self.timeout = timeout
+        self.max_tool_rounds = max_tool_rounds
 
     def _extra_payload(self) -> Dict[str, Any]:
         """Subclasses override to inject provider-specific payload fields (e.g. thinking, reasoning_effort)."""
@@ -194,17 +254,14 @@ class ProviderText(BaseNode):
         payload: Dict[str, Any],
     ) -> Any:
         """POST with exponential backoff on network errors, 429 and 5xx responses."""
-        attempts = max(1, self.max_retries)
-        for attempt in range(attempts):
-            try:
-                response = await client.post(self.base_url, headers=headers, json=payload)
-                response.raise_for_status()
-                return response.json()
-            except _TRANSPORT_ERRORS as e:
-                if not _is_retryable(e) or attempt == attempts - 1:
-                    raise
-                await asyncio.sleep(_retry_delay(attempt, e))
-        raise AssertionError("unreachable")
+        return await _post_json_with_retry(client, self.base_url, headers, payload, self.max_retries)
+
+    def _check_tool_round(self, rounds: int) -> None:
+        if rounds > self.max_tool_rounds:
+            raise ToolLoopLimitError(
+                f"{self.name}: model still requested tools after {self.max_tool_rounds} rounds; "
+                "raise max_tool_rounds or check the tools' results."
+            )
 
     async def _request(
         self,
@@ -215,6 +272,7 @@ class ProviderText(BaseNode):
         tools: Optional[List[Tool]] = None,
     ) -> str:
         messages: List[Dict[str, Any]] = list(payload["messages"])
+        tool_rounds = 0
 
         while True:
             current_payload = {**payload, "messages": messages}
@@ -228,6 +286,8 @@ class ProviderText(BaseNode):
             finish_reason = choice.get("finish_reason")
 
             if finish_reason == "tool_calls" and tools:
+                tool_rounds += 1
+                self._check_tool_round(tool_rounds)
                 messages.append(message)
                 messages.extend(await run_tool_calls(message.get("tool_calls", []), tools))
             else:
@@ -246,7 +306,7 @@ class ProviderText(BaseNode):
 
                 return content
 
-    async def _stream_one_turn(
+    async def _stream_one_turn(  # noqa: C901
         self,
         client: AsyncClient,
         headers: Dict[str, str],
@@ -359,28 +419,19 @@ class ProviderText(BaseNode):
         tools: Optional[List[Tool]] = None,
     ) -> str:
         messages: List[Dict[str, Any]] = list(payload["messages"])
+        on_chunk = context.get("on_chunk")
+        tool_rounds = 0
 
         while True:
             current_payload = {**payload, "messages": messages}
             full_content, tool_calls_buffer, finish_reason, _ = await self._stream_one_turn(
-                client, headers, current_payload
+                client, headers, current_payload, on_chunk=on_chunk
             )
 
-            if full_content:
-                ...
-
             if finish_reason == "tool_calls" and tools and tool_calls_buffer:
-                tool_calls_list = [
-                    {
-                        "id": tool_calls_buffer[i]["id"],
-                        "type": "function",
-                        "function": {
-                            "name": tool_calls_buffer[i]["name"],
-                            "arguments": tool_calls_buffer[i]["arguments"],
-                        },
-                    }
-                    for i in sorted(tool_calls_buffer)
-                ]
+                tool_rounds += 1
+                self._check_tool_round(tool_rounds)
+                tool_calls_list = _tool_calls_from_buffer(tool_calls_buffer)
                 messages.append(
                     {
                         "role": "assistant",
@@ -421,19 +472,7 @@ class ProviderText(BaseNode):
                 content, tool_calls_buffer, finish_reason, usage = await self._stream_one_turn(
                     client, headers, {**payload, "stream": True}, on_chunk=on_chunk
                 )
-                if content:
-                    ...
-                tool_calls = [
-                    {
-                        "id": tool_calls_buffer[i]["id"],
-                        "type": "function",
-                        "function": {
-                            "name": tool_calls_buffer[i]["name"],
-                            "arguments": tool_calls_buffer[i]["arguments"],
-                        },
-                    }
-                    for i in sorted(tool_calls_buffer)
-                ]
+                tool_calls = _tool_calls_from_buffer(tool_calls_buffer)
             else:
                 data = await self._post_with_retry(client, headers, {**payload, "stream": False})
                 if not data.get("choices"):
@@ -565,11 +604,15 @@ class ProviderEmbedding(BaseNode):
         api_key: str,
         base_url: str,
         model: str,
+        max_retries: int = 3,
+        timeout: float = 30.0,
     ):
         super().__init__(name)
         self.api_key = api_key
         self.model = model
         self.base_url = base_url
+        self.max_retries = max_retries
+        self.timeout = timeout
 
     async def exec(self, context: Dict[str, Any]) -> Any:
         input_text = context.get("input")
@@ -587,11 +630,8 @@ class ProviderEmbedding(BaseNode):
             "Content-Type": "application/json",
         }
 
-        async with AsyncClient(timeout=30.0) as client:
-            response = await client.post(self.base_url, headers=headers, json=payload)
-            response.raise_for_status()
-
-            data = response.json()
+        async with AsyncClient(timeout=self.timeout) as client:
+            data = await _post_json_with_retry(client, self.base_url, headers, payload, self.max_retries)
 
         embeddings = [item["embedding"] for item in sorted(data["data"], key=lambda item: item.get("index", 0))]
         context["embeddings"] = embeddings

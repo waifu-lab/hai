@@ -1,6 +1,11 @@
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from .providers import ProviderInfo, ProviderText
+from httpx import AsyncClient
+
+from .providers import ProviderInfo, ProviderText, resolve_api_key
+
+_API_KEY_ENV = ("ANTHROPIC_API_KEY",)
+_ANTHROPIC_VERSION = "2023-06-01"
 
 _EFFORT_TO_BUDGET = {"low": 1024, "medium": 4096, "high": 16000}
 _MIN_THINKING_BUDGET = 1024
@@ -35,14 +40,29 @@ class Anthropic(ProviderInfo):
     def __init__(
         self,
         name: str = "Anthropic",
-        api_key: str = "your_anthropic_api_key",
+        api_key: Optional[str] = None,
         base_url: str = "https://api.anthropic.com/v1",
     ):
         super().__init__(
             name=name,
-            api_key=api_key,
+            api_key=resolve_api_key(api_key, _API_KEY_ENV, "Anthropic"),
             base_url=base_url,
         )
+
+    async def models(self) -> List[str]:
+        """Model ids from Anthropic's native ``/models`` endpoint. Follows every result page."""
+        headers = {"x-api-key": self.api_key, "anthropic-version": _ANTHROPIC_VERSION}
+        params: Dict[str, Any] = {"limit": 1000}
+        ids: List[str] = []
+        async with AsyncClient(timeout=30.0) as client:
+            while True:
+                response = await client.get(f"{self.base_url}/models", headers=headers, params=params)
+                response.raise_for_status()
+                res = response.json()
+                ids.extend(item["id"] for item in res.get("data", []))
+                if not res.get("has_more") or not res.get("last_id"):
+                    return ids
+                params["after_id"] = res["last_id"]
 
 
 class AnthropicText(ProviderText):
@@ -67,13 +87,15 @@ class AnthropicText(ProviderText):
     def __init__(
         self,
         name: str = "Anthropic",
-        api_key: str = "your_anthropic_api_key",
+        api_key: Optional[str] = None,
         model: str = "claude-sonnet-4-5",
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stream: bool = False,
         max_retries: int = 3,
         timeout: float = 60.0,
+        max_tool_rounds: int = 10,
+        base_url: str = "https://api.anthropic.com/v1/chat/completions",
         reasoning_effort: Optional[Literal["low", "medium", "high"]] = None,
         thinking_mode: Optional[Literal["enabled", "adaptive"]] = None,
         thinking_budget: Optional[int] = None,
@@ -94,14 +116,15 @@ class AnthropicText(ProviderText):
 
         super().__init__(
             name=name,
-            api_key=api_key,
+            api_key=resolve_api_key(api_key, _API_KEY_ENV, "Anthropic"),
             model=model,
-            base_url="https://api.anthropic.com/v1/chat/completions",
+            base_url=base_url,
             temperature=temperature,
             max_tokens=max_tokens,
             stream=stream,
             max_retries=max_retries,
             timeout=timeout,
+            max_tool_rounds=max_tool_rounds,
         )
         self.reasoning_effort = reasoning_effort
         self.thinking_mode = thinking_mode

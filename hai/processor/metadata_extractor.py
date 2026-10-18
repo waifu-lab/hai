@@ -1,7 +1,7 @@
+import logging
 from typing import Any, Dict, Optional
 
 from hai.core import BaseNode
-import logging
 
 logger = logging.getLogger(__name__)
 

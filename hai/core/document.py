@@ -32,7 +32,5 @@ class Document:
         return value
 
     def __repr__(self) -> str:
-        content_preview = (
-            self.content[:50] + "..." if len(self.content) > 50 else self.content
-        )
+        content_preview = self.content[:50] + "..." if len(self.content) > 50 else self.content
         return f"Document(name='{self.name}', content='{content_preview}')"

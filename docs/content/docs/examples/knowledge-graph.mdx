@@ -118,5 +118,5 @@ from hai.loader import MarkdownLoader
 
 loader = MarkdownLoader(source="./articles", recursive=True)
 loader >> chunker >> extractor >> SaveFacts(store)
-result = await Flow(loader).timeout(600).run({})
+result = await Flow(loader).timeout(600).run()
 ```

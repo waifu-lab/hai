@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from typing import Any, Callable, Dict, Optional
 
 from .node import BaseNode
@@ -21,6 +22,12 @@ class Flow:
     """
 
     def __init__(self, start: BaseNode):
+        if getattr(start, "_has_predecessor", False) and start._next_node is None and not start._branches:
+            warnings.warn(
+                f"Flow starts at {start!r}, the last node of a chain, so only that node runs. "
+                "`a >> b >> c` returns c; pass the first node instead: `a >> b >> c; Flow(a)`.",
+                stacklevel=2,
+            )
         self.start = start
         self._timeout: Optional[float] = None
         self._on_error: Optional[Callable[[BaseNode, Exception], bool]] = None
@@ -53,7 +60,9 @@ class Flow:
                 current = node.next(None)
         return context
 
-    async def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Run the flow and return the context. Without *context* it starts from an empty dict."""
+        context = {} if context is None else context
         if self._timeout:
             return await asyncio.wait_for(self._execute(context), timeout=self._timeout)
         return await self._execute(context)

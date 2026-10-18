@@ -29,9 +29,7 @@ class ChunkProcessor(BaseNode):
         for doc in documents:
             doc_name = doc.get("name", "unknown")
             doc_content = doc.get("content", "")
-            doc_metadata = {
-                k: v for k, v in doc.items() if k not in ["content", "name"]
-            }
+            doc_metadata = {k: v for k, v in doc.items() if k not in ["content", "name"]}
 
             if self.splitter:
                 splitter_context = {"text": doc_content}

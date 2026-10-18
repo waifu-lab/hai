@@ -50,7 +50,7 @@ async def main():
     )
     loader >> chunker >> summarize >> BuildFinalPrompt("final") >> llm
 
-    result = await Flow(loader).timeout(300).run({})
+    result = await Flow(loader).timeout(300).run()
     print(result["assistant_message"])
 
 
