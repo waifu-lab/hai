@@ -3,9 +3,11 @@
   "private": true,
   "type": "module",
   "sideEffects": false,
+  "packageManager": "pnpm@11.10.0",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "build:pages": "vite build && node scripts/cloudflare-pages.mjs",
     "start": "serve .output/public --config ../../serve.json",
     "preview": "vite preview",
     "types:check": "tsc --noEmit",
